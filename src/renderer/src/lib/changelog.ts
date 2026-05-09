@@ -1,0 +1,129 @@
+export interface ReleaseNote {
+  version: string
+  date: string
+  title: string
+  highlights: string[]
+}
+
+// Most recent release first
+export const CHANGELOG: ReleaseNote[] = [
+  {
+    version: '1.5.0',
+    date: '2026-05-09',
+    title: 'Money Flow Architecture',
+    highlights: [
+      'Each expense now has TWO account fields: "Saves to" (envelope where money accumulates) and "Debits from" (where the bill actually exits). Leave Debits from blank if it\'s the same account.',
+      'Account types — envelope, offset, savings, mortgage. Set on each account so Vault knows what role it plays in your money flow.',
+      'Sweep rules on accounts — set a buffer target ("always keep $1,000") and a sweep amount ("move $200 when over $1,200"). Vault flags the move; you do the transfer manually.',
+      'Existing data is preserved: any expense that had an account assigned automatically becomes its "Saves to" account. Nothing breaks.',
+      'Display only for now — Tracker, Weekly Allocation, and Dashboard still show single-account view. Routing-aware analysis comes in v1.5.1.',
+    ],
+  },
+  {
+    version: '1.4.4',
+    date: '2026-05-09',
+    title: 'Tracker Crash Fix + Set Initial Balances',
+    highlights: [
+      'Fixed: Tracker page no longer goes black on click — was a missing Select import in the Shortfall Simulator that crashed the entire page (BUG-010)',
+      'Set initial balance when creating an account in Budget Setup → Accounts. Also works when editing — logs a new balance entry. No need to jump to Tracker just to set a starting balance',
+    ],
+  },
+  {
+    version: '1.4.3',
+    date: '2026-05-09',
+    title: 'Logo Refinement',
+    highlights: [
+      'Refined the V mark — bold rounded letterform (matching the original) on the new dark surface with teal gradient. Sharp without being shouty.',
+      'Updated the in-app logos (sidebar header, title bar, welcome screen) to match the new app icon — no more old gradient logos hanging around inside a freshly-skinned app',
+    ],
+  },
+  {
+    version: '1.4.2',
+    date: '2026-05-09',
+    title: 'Icon Redesign & Updater Fix',
+    highlights: [
+      'Redesigned app icon — dark surface with a sharp geometric V in accent teal, matching the app\'s premium aesthetic instead of fighting it',
+      'Fixed the in-app updater: "Install" now actually launches the new installer reliably (was using shell.openPath which failed silently; now uses a detached child process)',
+      'Install errors are now surfaced in the dialog instead of leaving you stuck on "Launching installer…"',
+    ],
+  },
+  {
+    version: '1.4.1',
+    date: '2026-05-09',
+    title: 'App Icon & Patch Notes',
+    highlights: [
+      'New custom Vault icon (V on a teal-to-indigo gradient) — no more default Electron icon in the taskbar',
+      'Click the version number in the sidebar to see this changelog',
+      'Income cards now show your real pay (e.g. $3,600 fortnightly) with the weekly equivalent as a subtle hint, not the other way around',
+    ],
+  },
+  {
+    version: '1.4.0',
+    date: '2026-05-09',
+    title: 'Payday Awareness',
+    highlights: [
+      'Set a reference payday date on each income source to unlock new features',
+      'Dashboard shows a payday countdown for each person ("3 days · Thu 14 May")',
+      'Weekly Allocation highlights pay weeks with a banner showing whose pay is arriving',
+      'Per-bill weekly buffer field — save extra $/wk on top of allocations to build cushions faster',
+      'Annual income frequency option (for once-a-year pays like bonuses)',
+    ],
+  },
+  {
+    version: '1.3.0',
+    date: '2026-05-08',
+    title: 'Polish & Quality',
+    highlights: [
+      'Quick balance log — update all account balances in one dialog instead of one at a time',
+      'Toast notifications for save, update, and delete actions',
+      'Confirmation dialogs before destructive actions (delete account, expense, goal)',
+      'Tabular numbers across the app for cleaner column alignment',
+      'Coloured top borders on dashboard metric cards',
+      'Account cards now use a coloured left edge instead of a small pill',
+      'Sidebar nav: "Accounts" renamed to "Tracker"',
+      'Bug fix: Cushion Score now uses real per-account expense totals (was always near-zero)',
+      'Bug fix: Dashboard health threshold aligned with Tracker (months-based)',
+      'Bug fix: Removed duplicate toWeeklyAmount in AccountTracker',
+    ],
+  },
+  {
+    version: '1.2.1',
+    date: '2026-05-07',
+    title: 'Dialog Animation Fix',
+    highlights: [
+      'Fixed dialog snap/lag — dialogs now fade in smoothly from centre instead of bouncing from the corner',
+    ],
+  },
+  {
+    version: '1.2.0',
+    date: '2026-05-07',
+    title: 'In-App Update Checker',
+    highlights: [
+      'Sidebar "Check for updates" button — point Vault at your release folder, it finds and installs newer versions automatically',
+    ],
+  },
+  {
+    version: '1.1.0',
+    date: '2026-05-06',
+    title: 'Months Ahead Tracking',
+    highlights: [
+      'Account Tracker shows per-bill "months ahead" coverage based on actual allocations',
+      'Established versioning policy — minor bump for features, patch for fixes',
+    ],
+  },
+  {
+    version: '1.0.0',
+    date: '2026-05-05',
+    title: 'First Release',
+    highlights: [
+      'Dashboard with Cushion Score, account health, bills due soon, active goals',
+      'Budget Setup: income, accounts, expenses with allocation amounts',
+      'Weekly Allocation page for moving money into purpose accounts',
+      'Account Tracker with balance logs',
+      'Goals with weekly contributions and progress snapshots',
+      'Charts page',
+      'Excel and PDF export',
+      'Local SQLite database — your data never leaves the machine',
+    ],
+  },
+]
