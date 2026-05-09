@@ -246,3 +246,23 @@ export function daysUntilPayday(reference: string, frequency: string): number {
   today.setHours(0, 0, 0, 0)
   return Math.round((next.getTime() - today.getTime()) / 86400000)
 }
+
+// Returns every payday in the window [from, from + weeksAhead*7 days)
+export function getUpcomingPaydays(reference: string, frequency: string, weeksAhead: number, from: Date = new Date()): Date[] {
+  const start = new Date(from)
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(start)
+  end.setDate(end.getDate() + weeksAhead * 7)
+
+  const dates: Date[] = []
+  let cursor = new Date(start)
+  for (let i = 0; i < 60 && cursor < end; i++) {
+    const next = getNextPayday(reference, frequency, cursor)
+    if (next >= end) break
+    if (dates.length === 0 || next.getTime() !== dates[dates.length - 1].getTime()) {
+      dates.push(new Date(next))
+    }
+    cursor = new Date(next.getTime() + 86400000) // advance one day past this payday
+  }
+  return dates
+}

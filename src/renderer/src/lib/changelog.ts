@@ -8,6 +8,16 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.8.0',
+    date: '2026-05-09',
+    title: 'Forward Planning',
+    highlights: [
+      'New "This Week" panel on the Dashboard — prioritised action list pulling together pay arrivals, allocation status, bills due in the next 7 days, and ready-to-move sweeps. Click items to jump to the relevant page.',
+      'New 8-week pay calendar — visual strip showing whose pay lands in each upcoming week. Lean weeks (pay arriving but less than your average weekly expenses) are flagged in amber.',
+      'Both panels only appear once you\'ve set payday reference dates on your income sources.',
+    ],
+  },
+  {
     version: '1.7.2',
     date: '2026-05-09',
     title: 'Update Detection Fix',

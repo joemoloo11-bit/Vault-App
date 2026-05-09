@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
-import { CheckCircle2, AlertTriangle, XCircle, Target, TrendingUp, DollarSign, ArrowRightLeft } from 'lucide-react'
+import { CheckCircle2, AlertTriangle, XCircle, Target, TrendingUp, DollarSign, ArrowRightLeft, Calendar, ListChecks } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
 import { Badge } from '@renderer/components/ui/badge'
 import { Progress } from '@renderer/components/ui/progress'
 import { formatCurrency, getCurrentWeekStart, getWeekLabel } from '@renderer/lib/utils'
-import { toWeeklyAmount, getNextPayday, daysUntilPayday } from '@renderer/types'
-import type { Account, IncomeSource, Expense, BalanceLog, Goal } from '@renderer/types'
-import { format } from 'date-fns'
+import { toWeeklyAmount, getNextPayday, daysUntilPayday, getUpcomingPaydays } from '@renderer/types'
+import type { Account, IncomeSource, Expense, BalanceLog, Goal, WeeklyAllocation } from '@renderer/types'
+import { format, addDays } from 'date-fns'
+import { Link } from 'react-router-dom'
 
 function toMonthlyAmount(amount: number, freq: string): number {
   switch (freq) {
@@ -25,7 +26,7 @@ interface DashboardData {
   expenses: Expense[]
   latestLogs: BalanceLog[]
   goals: Goal[]
-  weeklyAllocations: unknown[]
+  weeklyAllocations: WeeklyAllocation[]
 }
 
 function getCushionScore(weeklyIncome: number, weeklyExpenses: number, latestLogs: BalanceLog[], accounts: Account[], expenses: Expense[]): number {
@@ -67,13 +68,13 @@ export default function Dashboard() {
         window.api.goals.getAll(),
         window.api.allocations.getWeek(weekStart),
       ])
-      setData({ accounts, income, expenses, latestLogs, goals: goals as Goal[], weeklyAllocations })
+      setData({ accounts, income, expenses, latestLogs, goals: goals as Goal[], weeklyAllocations: weeklyAllocations as WeeklyAllocation[] })
       setLoading(false)
     }
     load()
   }, [])
 
-  const { accounts, income, expenses, latestLogs, goals } = data
+  const { accounts, income, expenses, latestLogs, goals, weeklyAllocations } = data
 
   const weeklyIncome = income.reduce((sum, s) => sum + toWeeklyAmount(s.amount, s.frequency), 0)
   const weeklyExpenses = expenses.reduce((sum, e) => sum + toWeeklyAmount(e.amount, e.frequency), 0)
@@ -190,6 +191,173 @@ export default function Dashboard() {
           })}
         </div>
       )}
+
+      {/* This Week — prioritized action list */}
+      {(() => {
+        const todayStart = new Date()
+        todayStart.setHours(0, 0, 0, 0)
+        const weekEnd = new Date(todayStart)
+        weekEnd.setDate(weekEnd.getDate() + 7)
+
+        const items: { label: string; sub?: string; tone: 'accent' | 'warning' | 'danger' | 'muted'; href?: string }[] = []
+
+        // 1. Pay arriving this week
+        income.filter(s => s.payday_reference).forEach(src => {
+          const next = getNextPayday(src.payday_reference!, src.frequency)
+          if (next < weekEnd) {
+            const days = Math.round((next.getTime() - todayStart.getTime()) / 86400000)
+            const when = days === 0 ? 'today' : days === 1 ? 'tomorrow' : format(next, 'EEEE')
+            items.push({
+              label: `${src.person_name}'s pay arrives ${when}`,
+              sub: `${formatCurrency(src.amount)} (${src.frequency})`,
+              tone: days <= 1 ? 'accent' : 'muted',
+            })
+          }
+        })
+
+        // 2. Allocations not funded
+        const fundedCount = weeklyAllocations.filter(a => a.funded === 1).length
+        if (accounts.length > 0 && fundedCount < accounts.length) {
+          items.push({
+            label: `Move money to envelopes — ${fundedCount}/${accounts.length} done`,
+            sub: 'Mark each account funded once you\'ve transferred',
+            tone: fundedCount === 0 ? 'warning' : 'muted',
+            href: '/weekly',
+          })
+        }
+
+        // 3. Bills due in next 7 days
+        const billsThisWeek = billsDueSoon.filter(b => b.daysUntil <= 7)
+        if (billsThisWeek.length > 0) {
+          items.push({
+            label: `${billsThisWeek.length} bill${billsThisWeek.length === 1 ? '' : 's'} due this week`,
+            sub: billsThisWeek.slice(0, 3).map(b => `${b.name} (${b.daysUntil}d)`).join(' · '),
+            tone: billsThisWeek.some(b => b.daysUntil <= 2) ? 'danger' : 'warning',
+          })
+        }
+
+        // 4. Sweep alerts
+        const sweeps = accounts.filter(acc => {
+          if (!acc.buffer_target || !acc.sweep_amount || !acc.sweep_to_account_id) return false
+          const log = latestLogs.find(l => l.account_id === acc.id)
+          if (!log) return false
+          return log.balance >= acc.buffer_target + acc.sweep_amount
+        })
+        if (sweeps.length > 0) {
+          items.push({
+            label: `${sweeps.length} sweep${sweeps.length === 1 ? '' : 's'} ready to move`,
+            sub: sweeps.map(s => `${s.name}: ${formatCurrency(s.sweep_amount!)}`).join(' · '),
+            tone: 'accent',
+            href: '/tracker',
+          })
+        }
+
+        if (items.length === 0) return null
+
+        const toneClasses = {
+          accent: 'text-accent border-accent/30 bg-accent/5',
+          warning: 'text-warning border-warning/30 bg-warning/5',
+          danger: 'text-danger border-danger/30 bg-danger/5',
+          muted: 'text-text-secondary border-border bg-surface-2/40',
+        }
+
+        return (
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-2">
+              <ListChecks size={14} className="text-accent" />
+              <CardTitle>This Week</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {items.map((it, i) => {
+                  const inner = (
+                    <div className={`rounded-lg border p-3 ${toneClasses[it.tone]}`}>
+                      <p className="text-sm font-medium">{it.label}</p>
+                      {it.sub && <p className="text-[11px] text-text-muted mt-0.5 truncate">{it.sub}</p>}
+                    </div>
+                  )
+                  return it.href
+                    ? <Link key={i} to={it.href} className="block hover:opacity-80 transition-opacity">{inner}</Link>
+                    : <div key={i}>{inner}</div>
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
+
+      {/* Pay calendar — next 8 weeks */}
+      {income.some(s => s.payday_reference) && (() => {
+        const weeksAhead = 8
+        const todayStart = new Date()
+        todayStart.setHours(0, 0, 0, 0)
+
+        // Build week buckets
+        const weeks = Array.from({ length: weeksAhead }, (_, i) => {
+          const start = addDays(todayStart, i * 7)
+          const end = addDays(start, 7)
+          return { start, end, events: [] as { person: string; amount: number; date: Date }[] }
+        })
+
+        income.filter(s => s.payday_reference).forEach(src => {
+          const dates = getUpcomingPaydays(src.payday_reference!, src.frequency, weeksAhead, todayStart)
+          dates.forEach(d => {
+            const wk = weeks.find(w => d >= w.start && d < w.end)
+            if (wk) wk.events.push({ person: src.person_name, amount: src.amount, date: d })
+          })
+        })
+
+        // Compute lean weeks: pay arriving < weekly expenses
+        const weeklyExpensesAmt = weeklyExpenses
+        const weekTotals = weeks.map(w => w.events.reduce((s, e) => s + e.amount, 0))
+
+        return (
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-2">
+              <Calendar size={14} className="text-accent" />
+              <CardTitle>Pay Calendar — Next 8 Weeks</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-8 gap-2">
+                {weeks.map((w, i) => {
+                  const isLean = weekTotals[i] > 0 && weekTotals[i] < weeklyExpensesAmt
+                  const isEmpty = w.events.length === 0
+                  const baseClasses = isEmpty
+                    ? 'border-border bg-surface-2/30 text-text-muted'
+                    : isLean
+                      ? 'border-warning/40 bg-warning/5'
+                      : 'border-accent/30 bg-accent/5'
+                  return (
+                    <div key={i} className={`rounded-lg border p-2 min-h-[80px] flex flex-col ${baseClasses}`}>
+                      <p className="text-[10px] uppercase tracking-wider text-text-muted">
+                        {format(w.start, 'd MMM')}
+                      </p>
+                      {isEmpty ? (
+                        <p className="text-[10px] text-text-muted mt-1">No pay</p>
+                      ) : (
+                        <div className="mt-1 space-y-0.5">
+                          {w.events.map((e, j) => (
+                            <div key={j}>
+                              <p className="text-[11px] text-text-primary truncate">{e.person}</p>
+                              <p className="text-[10px] text-text-muted tabular-nums">{formatCurrency(e.amount)}</p>
+                            </div>
+                          ))}
+                          {isLean && (
+                            <p className="text-[9px] text-warning mt-1 uppercase tracking-wider">Lean</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="text-[10px] text-text-muted mt-3">
+                Lean weeks have pay arriving but less than your average weekly expenses ({formatCurrency(weeklyExpensesAmt)}).
+              </p>
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       {/* Sweep alerts */}
       {(() => {
