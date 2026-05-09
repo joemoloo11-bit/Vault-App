@@ -8,6 +8,16 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.8.1',
+    date: '2026-05-09',
+    title: 'Allocation $0 Fix',
+    highlights: [
+      'Fixed: Weekly Allocation showed every account at $0 even when expenses were assigned. Cause was missed in v1.7.0 — the filter still used the old account_id field instead of the new save_account_id.',
+      'Same fix applied to Dashboard\'s account health checks and Cushion Score, which were also under-counting bills per account.',
+      'Catalogued as BUG-012 to prevent the same miss next time we add a new schema column.',
+    ],
+  },
+  {
     version: '1.8.0',
     date: '2026-05-09',
     title: 'Forward Planning',

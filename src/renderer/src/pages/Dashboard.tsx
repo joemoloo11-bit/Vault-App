@@ -39,7 +39,7 @@ function getCushionScore(weeklyIncome: number, weeklyExpenses: number, latestLog
     const log = latestLogs.find(l => l.account_id === acc.id)
     if (!log) return 0
     const monthlyBills = expenses
-      .filter(e => e.account_id === acc.id)
+      .filter(e => (e.save_account_id ?? e.account_id) === acc.id)
       .reduce((sum, e) => sum + toMonthlyAmount(e.amount, e.frequency), 0)
     if (monthlyBills === 0) return 40
     const months = log.balance / monthlyBills
@@ -103,7 +103,7 @@ export default function Dashboard() {
     const log = latestLogs.find(l => l.account_id === acc.id)
     if (!log) return 'no-data'
     const monthlyBills = expenses
-      .filter(e => e.account_id === acc.id)
+      .filter(e => (e.save_account_id ?? e.account_id) === acc.id)
       .reduce((sum, e) => sum + toMonthlyAmount(e.amount, e.frequency), 0)
     if (monthlyBills === 0) return 'covered'
     const months = log.balance / monthlyBills

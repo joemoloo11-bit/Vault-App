@@ -40,7 +40,8 @@ export default function WeeklyAllocation() {
 
   function getAccountWeeklyBase(accountId: number): number {
     return expenses
-      .filter(e => e.account_id === accountId)
+      // Match by save account (where money should land this week), with legacy account_id fallback
+      .filter(e => (e.save_account_id ?? e.account_id) === accountId)
       .reduce((sum, e) => sum + toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0), 0)
   }
 
