@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, safeStorage } from 'electron'
 import { join } from 'path'
-import { statSync, writeFileSync, readdirSync, existsSync } from 'fs'
+import { statSync, writeFileSync, readFileSync, existsSync, mkdtempSync } from 'fs'
+import { tmpdir } from 'os'
 import { spawn } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
@@ -107,47 +108,133 @@ app.whenReady().then(() => {
   ipcMain.handle('tests:update', (_, id, data) => dbUpdateTestRun(id, data))
   ipcMain.handle('tests:delete', (_, id) => dbDeleteTestRun(id))
 
-  // ─── Debug ────────────────────────────────────────────────────────────────
-  // ─── Updates ──────────────────────────────────────────────────────────────
-  ipcMain.handle('app:checkForUpdates', (_, folderPath: string) => {
+  // ─── Updates (GitHub Releases) ───────────────────────────────────────────
+  // The repo is private — needs a PAT with read access to download release assets.
+
+  const REPO_OWNER = 'joemoloo11-bit'
+  const REPO_NAME = 'Vault-App'
+  const tokenPath = () => join(app.getPath('userData'), 'github-token.dat')
+
+  function saveToken(token: string): void {
+    if (!token) {
+      try { writeFileSync(tokenPath(), '') } catch {}
+      return
+    }
+    if (safeStorage.isEncryptionAvailable()) {
+      const encrypted = safeStorage.encryptString(token)
+      writeFileSync(tokenPath(), encrypted)
+    } else {
+      // Fallback: store plaintext (acceptable for personal app on personal machine)
+      writeFileSync(tokenPath(), token, 'utf-8')
+    }
+  }
+
+  function loadToken(): string | null {
     try {
-      const files = readdirSync(folderPath)
-      const pattern = /^Vault Setup (\d+\.\d+\.\d+)\.exe$/
-      const found = files
-        .map(f => ({ f, m: f.match(pattern) }))
-        .filter(({ m }) => m !== null)
-        .map(({ f, m }) => ({ version: m![1], path: join(folderPath, f) }))
-        .sort((a, b) => compareVersions(b.version, a.version))
-      const current = app.getVersion()
-      if (found.length === 0) return { hasUpdate: false, currentVersion: current }
-      const latest = found[0]
-      return {
-        hasUpdate: compareVersions(latest.version, current) > 0,
-        latestVersion: latest.version,
-        currentVersion: current,
-        path: latest.path,
+      const path = tokenPath()
+      if (!existsSync(path)) return null
+      const data = readFileSync(path)
+      if (data.length === 0) return null
+      if (safeStorage.isEncryptionAvailable()) {
+        try { return safeStorage.decryptString(data) } catch {
+          // Maybe stored as plaintext from a fallback save
+          return data.toString('utf-8') || null
+        }
       }
+      return data.toString('utf-8') || null
     } catch {
-      return { error: 'Could not read that folder — check the path is correct.' }
+      return null
+    }
+  }
+
+  ipcMain.handle('app:setGitHubToken', (_, token: string) => {
+    try {
+      saveToken(token)
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message ?? 'Failed to save token' }
     }
   })
 
-  ipcMain.handle('app:installUpdate', async (_, exePath: string) => {
-    if (!existsSync(exePath)) {
-      return { success: false, error: `Installer not found: ${exePath}` }
+  ipcMain.handle('app:hasGitHubToken', () => {
+    return loadToken() !== null
+  })
+
+  ipcMain.handle('app:checkForUpdates', async () => {
+    const token = loadToken()
+    if (!token) {
+      return { error: 'No GitHub token set. Paste a Personal Access Token in the dialog to enable update checks.' }
     }
     try {
-      const child = spawn(exePath, [], { detached: true, stdio: 'ignore' })
-      child.on('error', (err) => {
-        console.error('Failed to launch installer:', err)
+      const res = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`, {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'Vault-App',
+        },
       })
+      if (res.status === 401 || res.status === 403) {
+        return { error: 'GitHub rejected the token (401/403). Check it has read access to the repo.' }
+      }
+      if (res.status === 404) {
+        return { error: 'No releases found yet. The first release will appear once GitHub Actions finishes building it.' }
+      }
+      if (!res.ok) {
+        return { error: `GitHub API error: ${res.status} ${res.statusText}` }
+      }
+      const release = await res.json() as {
+        tag_name: string
+        name: string
+        assets: { id: number; name: string; browser_download_url: string; url: string }[]
+      }
+      const tagVersion = release.tag_name.replace(/^v/, '')
+      const current = app.getVersion()
+      const exeAsset = release.assets.find(a => /^Vault Setup .+\.exe$/.test(a.name))
+      if (!exeAsset) {
+        return { error: 'Latest release has no Windows installer attached.' }
+      }
+      return {
+        hasUpdate: compareVersions(tagVersion, current) > 0,
+        latestVersion: tagVersion,
+        currentVersion: current,
+        assetUrl: exeAsset.url, // API URL — required for private repo download
+        assetName: exeAsset.name,
+      }
+    } catch (err: any) {
+      return { error: `Network error: ${err?.message ?? 'unknown'}` }
+    }
+  })
+
+  ipcMain.handle('app:installUpdate', async (_, assetUrl: string, assetName: string) => {
+    const token = loadToken()
+    if (!token) return { success: false, error: 'No GitHub token set.' }
+    try {
+      const res = await fetch(assetUrl, {
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: 'application/octet-stream',
+          'User-Agent': 'Vault-App',
+        },
+      })
+      if (!res.ok) {
+        return { success: false, error: `Download failed: ${res.status} ${res.statusText}` }
+      }
+      const buf = Buffer.from(await res.arrayBuffer())
+      const dir = mkdtempSync(join(tmpdir(), 'vault-update-'))
+      const exePath = join(dir, assetName)
+      writeFileSync(exePath, buf)
+
+      const child = spawn(exePath, [], { detached: true, stdio: 'ignore' })
+      child.on('error', (err) => console.error('Failed to launch installer:', err))
       child.unref()
       setTimeout(() => app.quit(), 1500)
       return { success: true }
     } catch (err: any) {
-      return { success: false, error: err?.message ?? 'Failed to launch installer' }
+      return { success: false, error: err?.message ?? 'Install failed' }
     }
   })
+
+  // ─── Debug ────────────────────────────────────────────────────────────────
 
   ipcMain.handle('debug:getInfo', () => {
     const dbPath = join(app.getPath('userData'), 'vault.db')

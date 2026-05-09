@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   LayoutDashboard,
   Settings2,
@@ -20,11 +20,9 @@ import { Dialog, DialogContent, DialogClose } from '@renderer/components/ui/dial
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 
-const DEFAULT_UPDATE_FOLDER = 'C:\\Users\\James\\Desktop\\Budgeting App\\release'
-
 type CheckResult =
   | { hasUpdate: false; currentVersion: string }
-  | { hasUpdate: true; latestVersion: string; currentVersion: string; path: string }
+  | { hasUpdate: true; latestVersion: string; currentVersion: string; assetUrl: string; assetName: string }
   | { error: string }
 
 const navItems = [
@@ -42,21 +40,46 @@ export default function Sidebar() {
   const [updateOpen, setUpdateOpen] = useState(false)
   const [changelogOpen, setChangelogOpen] = useState(false)
   const currentVersion = CHANGELOG[0]?.version ?? '1.0.0'
-  const [folder, setFolder] = useState(() => localStorage.getItem('updateFolder') ?? DEFAULT_UPDATE_FOLDER)
+  const [hasToken, setHasToken] = useState<boolean | null>(null)
+  const [tokenInput, setTokenInput] = useState('')
+  const [savingToken, setSavingToken] = useState(false)
   const [checking, setChecking] = useState(false)
   const [installing, setInstalling] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const [result, setResult] = useState<CheckResult | null>(null)
 
-  function saveFolder(val: string) {
-    setFolder(val)
-    localStorage.setItem('updateFolder', val)
+  useEffect(() => {
+    if (updateOpen) {
+      ;(window.api as any).updates.hasToken().then(setHasToken)
+    }
+  }, [updateOpen])
+
+  async function handleSaveToken() {
+    setSavingToken(true)
+    try {
+      const res = await (window.api as any).updates.setToken(tokenInput.trim())
+      if (res?.success) {
+        setHasToken(true)
+        setTokenInput('')
+      } else {
+        setResult({ error: res?.error ?? 'Failed to save token.' })
+      }
+    } finally {
+      setSavingToken(false)
+    }
+  }
+
+  async function handleClearToken() {
+    await (window.api as any).updates.setToken('')
+    setHasToken(false)
+    setResult(null)
   }
 
   async function handleCheck() {
     setChecking(true)
     setResult(null)
     try {
-      const res = await (window.api as any).updates.check(folder)
+      const res = await (window.api as any).updates.check()
       setResult(res)
     } catch {
       setResult({ error: 'Failed to communicate with the app.' })
@@ -65,17 +88,20 @@ export default function Sidebar() {
     }
   }
 
-  async function handleInstall(path: string) {
+  async function handleInstall(assetUrl: string, assetName: string) {
+    setDownloading(true)
     setInstalling(true)
     try {
-      const res = await (window.api as any).updates.install(path)
+      const res = await (window.api as any).updates.install(assetUrl, assetName)
       if (res && res.success === false) {
         setResult({ error: res.error ?? 'Failed to launch installer.' })
         setInstalling(false)
+        setDownloading(false)
       }
     } catch (err: any) {
       setResult({ error: err?.message ?? 'Failed to launch installer.' })
       setInstalling(false)
+      setDownloading(false)
     }
   }
 
@@ -151,18 +177,46 @@ export default function Sidebar() {
       </div>
 
       <Dialog open={updateOpen} onOpenChange={setUpdateOpen}>
-        <DialogContent title="Check for Updates" description="Point Vault to the release folder to check for a newer version.">
+        <DialogContent title="Check for Updates" description="Vault checks GitHub for new releases. Set your access token below (one-time).">
           <div className="space-y-4">
-            <Input
-              label="Release folder path"
-              value={folder}
-              onChange={e => saveFolder(e.target.value)}
-              placeholder="C:\Users\...\release"
-            />
+            {hasToken === false && (
+              <div className="rounded-lg border border-border bg-surface-2/40 p-3 space-y-3">
+                <div>
+                  <p className="text-sm font-medium text-text-primary">Connect to GitHub</p>
+                  <p className="text-[11px] text-text-muted mt-1 leading-relaxed">
+                    Generate a fine-grained Personal Access Token at <span className="text-accent">github.com/settings/tokens?type=beta</span> with read access to the <span className="text-accent">Vault-App</span> repo (Contents: read). Paste it below — stored encrypted on this machine only.
+                  </p>
+                </div>
+                <Input
+                  label="GitHub Personal Access Token"
+                  type="password"
+                  value={tokenInput}
+                  onChange={e => setTokenInput(e.target.value)}
+                  placeholder="github_pat_..."
+                />
+                <Button onClick={handleSaveToken} disabled={savingToken || !tokenInput.trim()} className="w-full">
+                  {savingToken ? 'Saving…' : 'Save token'}
+                </Button>
+              </div>
+            )}
 
-            <Button onClick={handleCheck} disabled={checking} className="w-full">
-              {checking ? 'Checking...' : 'Check for Updates'}
-            </Button>
+            {hasToken === true && (
+              <>
+                <div className="flex items-center justify-between rounded-lg border border-success/30 bg-success/10 p-2.5">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={14} className="text-success" />
+                    <p className="text-xs text-text-primary">GitHub token connected</p>
+                  </div>
+                  <button onClick={handleClearToken} className="text-[10px] text-text-muted hover:text-danger underline">
+                    Clear
+                  </button>
+                </div>
+
+                <Button onClick={handleCheck} disabled={checking} className="w-full">
+                  {checking ? 'Checking GitHub…' : 'Check for Updates'}
+                </Button>
+              </>
+            )}
 
             {result && (
               <div className={`rounded-lg p-4 border ${
@@ -187,11 +241,11 @@ export default function Sidebar() {
                       </div>
                     </div>
                     <Button
-                      onClick={() => handleInstall(result.path)}
+                      onClick={() => handleInstall(result.assetUrl, result.assetName)}
                       disabled={installing}
                       className="w-full"
                     >
-                      {installing ? 'Launching installer…' : `Install v${result.latestVersion}`}
+                      {downloading && installing ? 'Downloading & launching…' : installing ? 'Launching installer…' : `Install v${result.latestVersion}`}
                     </Button>
                     <p className="text-[10px] text-text-muted text-center">Vault will close automatically when the installer launches.</p>
                   </div>

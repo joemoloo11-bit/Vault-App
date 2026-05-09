@@ -67,10 +67,12 @@ contextBridge.exposeInMainWorld('api', {
     delete: (id: number) => ipcRenderer.invoke('tests:delete', id),
   },
 
-  // Updates
+  // Updates (GitHub Releases)
   updates: {
-    check: (folderPath: string) => ipcRenderer.invoke('app:checkForUpdates', folderPath),
-    install: (exePath: string) => ipcRenderer.invoke('app:installUpdate', exePath),
+    check: () => ipcRenderer.invoke('app:checkForUpdates'),
+    install: (assetUrl: string, assetName: string) => ipcRenderer.invoke('app:installUpdate', assetUrl, assetName),
+    setToken: (token: string) => ipcRenderer.invoke('app:setGitHubToken', token),
+    hasToken: () => ipcRenderer.invoke('app:hasGitHubToken'),
   },
 
   // Debug

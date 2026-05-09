@@ -8,6 +8,17 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.6.0',
+    date: '2026-05-09',
+    title: 'GitHub-Powered Updates',
+    highlights: [
+      'Updates now pull from GitHub releases instead of a local folder. Whenever a new version ships, "Check for updates" finds it from anywhere — no more pointing at a release folder.',
+      'One-time GitHub token setup: paste a fine-grained Personal Access Token in the update dialog (read-only access to the Vault-App repo). Stored encrypted on your machine only.',
+      'Automated release pipeline: pushing a version tag to GitHub now triggers a workflow that builds the Windows installer and publishes it as a GitHub release automatically. No more manual uploads.',
+      'Removed the local folder path input — token-based check replaces it entirely.',
+    ],
+  },
+  {
     version: '1.5.0',
     date: '2026-05-09',
     title: 'Money Flow Architecture',
