@@ -1,0 +1,51 @@
+name: Sync to Phone App
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Vault
+        uses: actions/checkout@v4
+        with:
+          path: vault
+
+      - name: Checkout Phone repo
+        uses: actions/checkout@v4
+        with:
+          repository: joemoloo11-bit/Phone-App-Repository
+          token: ${{ secrets.PHONE_APP_TOKEN }}
+          path: phone
+          ref: main
+
+      - name: Copy Vault files into vault-source/
+        run: |
+          rm -rf phone/vault-source
+          mkdir -p phone/vault-source
+          cp -R vault/src phone/vault-source/
+          cp vault/package.json phone/vault-source/
+          cp vault/tailwind.config.js phone/vault-source/
+          cp vault/postcss.config.js phone/vault-source/
+          cp vault/electron.vite.config.ts phone/vault-source/
+          cp vault/tsconfig.json phone/vault-source/
+          cp vault/tsconfig.web.json phone/vault-source/
+          cp vault/tsconfig.node.json phone/vault-source/
+
+      - name: Commit and push to vault-sync branch
+        working-directory: phone
+        run: |
+          git config user.name "Vault Sync"
+          git config user.email "actions@github.com"
+          git checkout -B vault-sync
+          git add vault-source
+          if git diff --staged --quiet; then
+            echo "No changes since last sync."
+            exit 0
+          fi
+          SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          git commit -m "Sync from Vault @ ${SHORT}"
+          git push --force origin vault-sync
