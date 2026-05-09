@@ -189,7 +189,9 @@ app.whenReady().then(() => {
       }
       const tagVersion = release.tag_name.replace(/^v/, '')
       const current = app.getVersion()
-      const exeAsset = release.assets.find(a => /^Vault Setup .+\.exe$/.test(a.name))
+      // GitHub replaces spaces with dots in uploaded asset names, so accept both.
+      // Local build: "Vault Setup 1.7.2.exe" — GitHub upload: "Vault.Setup.1.7.2.exe"
+      const exeAsset = release.assets.find(a => /^Vault[ .]Setup[ .].+\.exe$/.test(a.name))
       if (!exeAsset) {
         return { error: 'Latest release has no Windows installer attached.' }
       }

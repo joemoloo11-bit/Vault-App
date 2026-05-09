@@ -8,6 +8,15 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.7.2',
+    date: '2026-05-09',
+    title: 'Update Detection Fix',
+    highlights: [
+      'Fixed: app failed to detect new GitHub releases because GitHub renames the .exe filename during upload (spaces become dots). The asset matcher now accepts both "Vault Setup X.X.X.exe" and "Vault.Setup.X.X.X.exe" variants.',
+      'Verified end-to-end: GitHub Actions builds the installer, attaches it to the release, app finds and installs it.',
+    ],
+  },
+  {
     version: '1.7.1',
     date: '2026-05-09',
     title: 'Pipeline Fix',
