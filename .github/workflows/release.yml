@@ -28,7 +28,12 @@ jobs:
         run: npm ci
 
       - name: Build Windows installer
-        run: npm run build:win
+        # electron-builder auto-publishes when a tag is detected, but we let
+        # softprops/action-gh-release handle the release in the next step.
+        # `--publish never` disables electron-builder's built-in publisher.
+        run: |
+          npm run build
+          npx electron-builder --win --publish never
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

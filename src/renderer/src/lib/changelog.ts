@@ -8,6 +8,15 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.7.1',
+    date: '2026-05-09',
+    title: 'Pipeline Fix',
+    highlights: [
+      'Fixed the GitHub Actions release pipeline — electron-builder was trying to auto-publish on tagged commits and failing without a GH_TOKEN. Workflow now passes --publish never so softprops/action-gh-release handles the upload cleanly.',
+      'No app changes — this release exists to verify the automated build/publish flow works end-to-end.',
+    ],
+  },
+  {
     version: '1.7.0',
     date: '2026-05-09',
     title: 'Money Flow in Action',
