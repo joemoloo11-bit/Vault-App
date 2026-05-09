@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { CheckCircle2, AlertTriangle, XCircle, Target, TrendingUp, DollarSign } from 'lucide-react'
+import { CheckCircle2, AlertTriangle, XCircle, Target, TrendingUp, DollarSign, ArrowRightLeft } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
 import { Badge } from '@renderer/components/ui/badge'
 import { Progress } from '@renderer/components/ui/progress'
@@ -190,6 +190,55 @@ export default function Dashboard() {
           })}
         </div>
       )}
+
+      {/* Sweep alerts */}
+      {(() => {
+        const sweepReady = accounts.filter(acc => {
+          if (!acc.buffer_target || !acc.sweep_amount || !acc.sweep_to_account_id) return false
+          const log = latestLogs.find(l => l.account_id === acc.id)
+          if (!log) return false
+          return log.balance >= acc.buffer_target + acc.sweep_amount
+        })
+        if (sweepReady.length === 0) return null
+        return (
+          <Card className="border-accent/30 bg-accent/5">
+            <CardHeader className="flex flex-row items-center gap-2">
+              <ArrowRightLeft size={14} className="text-accent" />
+              <CardTitle>Sweep Alerts</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2.5">
+                {sweepReady.map(acc => {
+                  const log = latestLogs.find(l => l.account_id === acc.id)!
+                  const target = acc.sweep_to_account_id ? accounts.find(a => a.id === acc.sweep_to_account_id) : undefined
+                  const excess = log.balance - acc.buffer_target!
+                  return (
+                    <div key={acc.id} className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: acc.color }} />
+                        <div className="min-w-0">
+                          <p className="text-sm text-text-primary truncate">{acc.name}</p>
+                          <p className="text-[11px] text-text-muted">
+                            {formatCurrency(log.balance)} · {formatCurrency(excess)} above buffer
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="text-sm font-semibold text-accent tabular-nums">
+                          Move {formatCurrency(acc.sweep_amount!)}
+                        </span>
+                        {target && (
+                          <span className="text-xs text-text-muted">→ {target.name}</span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       <div className="grid grid-cols-2 gap-4">
         {/* Account health */}

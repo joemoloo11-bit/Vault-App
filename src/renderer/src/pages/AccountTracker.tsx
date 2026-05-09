@@ -95,7 +95,9 @@ export default function AccountTracker() {
     return accounts.map(acc => ({
       account: acc,
       latestLog: latestLogs.find(l => l.account_id === acc.id),
-      bills: expenses.filter(e => e.account_id === acc.id),
+      // Bills are grouped under their save account (where money accumulates).
+      // Falls back to legacy account_id for pre-v1.5 data.
+      bills: expenses.filter(e => (e.save_account_id ?? e.account_id) === acc.id),
     }))
   }
 
@@ -267,7 +269,28 @@ export default function AccountTracker() {
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-center gap-3">
                       <div>
-                        <p className="text-base font-semibold text-text-primary">{account.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-base font-semibold text-text-primary">{account.name}</p>
+                          {account.type && (
+                            <span className="text-[10px] uppercase tracking-wider text-text-muted bg-surface-2 border border-border rounded px-1.5 py-0.5">
+                              {account.type}
+                            </span>
+                          )}
+                          {(() => {
+                            if (!account.buffer_target || !account.sweep_amount || !account.sweep_to_account_id) return null
+                            if (!latestLog) return null
+                            const threshold = account.buffer_target + account.sweep_amount
+                            if (latestLog.balance >= threshold) {
+                              const sweepTo = accounts.find(a => a.id === account.sweep_to_account_id)
+                              return (
+                                <span className="text-[10px] uppercase tracking-wider text-accent bg-accent/10 border border-accent/30 rounded px-1.5 py-0.5">
+                                  Sweep {formatCurrency(account.sweep_amount)} → {sweepTo?.name ?? 'savings'}
+                                </span>
+                              )
+                            }
+                            return null
+                          })()}
+                        </div>
                         {latestLog ? (
                           <p className="text-xs text-text-muted mt-0.5">
                             Logged {format(new Date(latestLog.logged_at), 'd MMM yyyy')}
@@ -311,6 +334,11 @@ export default function AccountTracker() {
                                   <span className="text-sm font-medium text-text-primary">{bill.name}</span>
                                   <span className="text-xs text-text-muted">{bill.frequency}</span>
                                   {bill.due_day && <span className="text-xs text-text-muted">due {getDueDayLabel(bill.due_day)}</span>}
+                                  {bill.debit_account_name && bill.debit_account_name !== (bill.save_account_name ?? bill.account_name) && (
+                                    <span className="text-[10px] text-text-muted bg-surface border border-border rounded px-1.5 py-0.5">
+                                      → {bill.debit_account_name}
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="flex items-center gap-2 mt-0.5">
                                   <span className="text-xs text-text-secondary">{formatCurrency(bill.amount)}</span>

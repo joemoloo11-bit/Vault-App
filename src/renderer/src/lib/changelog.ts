@@ -8,6 +8,18 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.7.0',
+    date: '2026-05-09',
+    title: 'Money Flow in Action',
+    highlights: [
+      'Tracker now shows each account\'s type (envelope / offset / savings / mortgage) right next to the name',
+      'Sweep readiness on the Tracker — when an account exceeds buffer + sweep amount, a teal pill appears showing the move ready to make ("Sweep $200 → Savings")',
+      'Bill rows on Tracker show debit routing when the bill exits a different account than where it accumulates ("→ Bank 2 Bills")',
+      'New Sweep Alerts panel on the Dashboard — lists every account currently above its buffer threshold with the exact amount to move and where',
+      'Tracker now groups bills by save_account_id (where money lands), with fallback to legacy account_id for older data',
+    ],
+  },
+  {
     version: '1.6.0',
     date: '2026-05-09',
     title: 'GitHub-Powered Updates',
