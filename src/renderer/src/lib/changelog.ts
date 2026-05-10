@@ -8,6 +8,16 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.9.1',
+    date: '2026-05-09',
+    title: 'Tracker Visual Cleanup',
+    highlights: [
+      'Envelope accounts no longer show "Shortfall" when balance is $0. Envelopes drain to $0 between transfers — that\'s healthy, not an alarm. They now show a neutral "Envelope" badge instead.',
+      'Sparkline only shows when there are 4+ balance logs (was 2+). Two-point lines looked like glitches.',
+      'Note: proper envelope state tracking (filled / moved / waiting) requires recording transfer events, which lands in v1.10.0 Weekly Move rebuild.',
+    ],
+  },
+  {
     version: '1.9.0',
     date: '2026-05-09',
     title: 'Account Depth — Balance History & Projection',

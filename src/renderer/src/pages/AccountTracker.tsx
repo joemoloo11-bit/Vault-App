@@ -122,7 +122,11 @@ export default function AccountTracker() {
     }))
   }
 
-  function getCoverageStatus(data: AccountWithData): 'covered' | 'at-risk' | 'shortfall' | 'unknown' {
+  function getCoverageStatus(data: AccountWithData): 'covered' | 'at-risk' | 'shortfall' | 'unknown' | 'envelope' {
+    // Envelopes are transient — they fill on pay day and drain on transfer day. Judging
+    // them by current balance vs bills is misleading. Until v1.10.0 records transfer
+    // events and can derive proper envelope state, just mark them as 'envelope' (neutral).
+    if (data.account.type === 'envelope') return 'envelope'
     if (!data.latestLog) return 'unknown'
     const monthlyBills = data.bills.reduce((sum, e) => sum + toMonthly(e.amount, e.frequency), 0)
     if (monthlyBills === 0) return 'covered'
@@ -148,6 +152,7 @@ export default function AccountTracker() {
     'at-risk': { label: 'At Risk', variant: 'warning' as const, icon: AlertTriangle, color: 'text-warning' },
     shortfall: { label: 'Shortfall', variant: 'danger' as const, icon: XCircle, color: 'text-danger' },
     unknown: { label: 'No data', variant: 'muted' as const, icon: DollarSign, color: 'text-text-muted' },
+    envelope: { label: 'Envelope', variant: 'muted' as const, icon: DollarSign, color: 'text-text-muted' },
   }
 
   return (
@@ -322,10 +327,10 @@ export default function AccountTracker() {
                         )}
                       </div>
                     </div>
-                    {/* Sparkline (clickable → history) */}
+                    {/* Sparkline (clickable → history). Hide below 4 logs — too few to show a meaningful trend. */}
                     {(() => {
                       const history = getAccountHistory(account.id)
-                      if (history.length < 2) return null
+                      if (history.length < 4) return null
                       const sparkData = history.slice(-12).map(l => ({ balance: l.balance }))
                       return (
                         <button
