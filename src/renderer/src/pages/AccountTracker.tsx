@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, AlertTriangle, CheckCircle2, XCircle, DollarSign, TrendingUp, Trash2 } from 'lucide-react'
+import { Plus, AlertTriangle, CheckCircle2, XCircle, DollarSign, TrendingUp, Trash2, ChevronDown, ChevronRight } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer, XAxis, YAxis, Tooltip, ReferenceLine } from 'recharts'
 import { Card, CardContent } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
@@ -81,7 +81,16 @@ export default function AccountTracker() {
   const [historyAccountId, setHistoryAccountId] = useState<number | null>(null)
   const [confirmDeleteLogId, setConfirmDeleteLogId] = useState<number | null>(null)
   const [coverageUnit, setCoverageUnit] = useState<CoverageUnit>('months')
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set())
   const { toast } = useToast()
+
+  function toggleExpanded(id: number) {
+    setExpandedAccounts(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
 
   useEffect(() => { loadAll() }, [])
 
@@ -137,9 +146,15 @@ export default function AccountTracker() {
     return accounts.map(acc => ({
       account: acc,
       latestLog: latestLogs.find(l => l.account_id === acc.id),
-      // Bills are grouped under their save account (where money accumulates).
-      // Falls back to legacy account_id for pre-v1.5 data.
-      bills: expenses.filter(e => (e.save_account_id ?? e.account_id) === acc.id),
+      // Bills belong to the account they actually DEBIT from. For routed bills,
+      // that's debit_account_id. For accumulating bills (no debit_account), they
+      // pay from the save_account. Pre-v1.5 data falls back to legacy account_id.
+      // Net effect: pure transit envelopes show no bills (correct — they're just
+      // conduits, the bills are covered by their debit account's balance).
+      bills: expenses.filter(e => {
+        const homeId = e.debit_account_id ?? e.save_account_id ?? e.account_id
+        return homeId === acc.id
+      }),
     }))
   }
 
@@ -424,7 +439,20 @@ export default function AccountTracker() {
 
                   {bills.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-border">
-                      <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-3">Bills assigned</p>
+                      <button
+                        onClick={() => toggleExpanded(account.id)}
+                        className="w-full flex items-center justify-between text-left mb-3 group"
+                      >
+                        <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider group-hover:text-text-secondary transition-colors">
+                          {bills.length} {bills.length === 1 ? 'bill' : 'bills'} assigned
+                        </p>
+                        {expandedAccounts.has(account.id) ? (
+                          <ChevronDown size={14} className="text-text-muted group-hover:text-text-secondary transition-colors" />
+                        ) : (
+                          <ChevronRight size={14} className="text-text-muted group-hover:text-text-secondary transition-colors" />
+                        )}
+                      </button>
+                      {expandedAccounts.has(account.id) && (
                       <div className="space-y-2">
                         {bills.map(bill => {
                           const months = latestLog ? getMonthsAhead(bill, bills, balance) : null
@@ -478,6 +506,7 @@ export default function AccountTracker() {
                           )
                         })}
                       </div>
+                      )}
                     </div>
                   )}
                 </CardContent>

@@ -8,6 +8,15 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.10.1',
+    date: '2026-05-09',
+    title: 'Tracker UX Fix',
+    highlights: [
+      'Bills now appear under the account they actually DEBIT from (not the envelope they pass through). Pure transit envelopes — Bill Money, Mortgage Money etc — no longer show every bill with confusing "0d ahead" red flags. Coverage shows correctly under Bankwest Bills, Bankwest Mortgage, etc.',
+      'Bills section is collapsed by default — click "X bills assigned" with the chevron to expand. No more endless scrolling past 19 bill rows per account.',
+    ],
+  },
+  {
     version: '1.10.0',
     date: '2026-05-09',
     title: 'Weekly Move + Coverage Detail',
