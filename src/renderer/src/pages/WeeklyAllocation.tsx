@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react'
-import { ChevronLeft, ChevronRight, CheckCircle2, Circle, DollarSign } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { ChevronLeft, ChevronRight, CheckCircle2, ArrowRight, DollarSign, Wallet, Coffee, Trash2 } from 'lucide-react'
 import { Card, CardContent } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
+import { Input } from '@renderer/components/ui/input'
+import { useToast } from '@renderer/components/ui/toast'
 import { formatCurrency, getCurrentWeekStart, getWeekLabel } from '@renderer/lib/utils'
 import { toWeeklyAmount, isPayWeek } from '@renderer/types'
-import type { Account, IncomeSource, Expense, WeeklyAllocation } from '@renderer/types'
+import type { Account, IncomeSource, Expense, Transfer, BalanceLog } from '@renderer/types'
 import { addDays, format, subDays } from 'date-fns'
 
 export default function WeeklyAllocation() {
@@ -12,117 +14,151 @@ export default function WeeklyAllocation() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [income, setIncome] = useState<IncomeSource[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
-  const [allocations, setAllocations] = useState<WeeklyAllocation[]>([])
-  const [buffers, setBuffers] = useState<Record<number, number>>({})
+  const [transfers, setTransfers] = useState<Transfer[]>([])
+  const [latestLogs, setLatestLogs] = useState<BalanceLog[]>([])
+  const [drafts, setDrafts] = useState<Record<string, string>>({}) // key: `${from}-${to}` → entered amount string
+  const { toast } = useToast()
 
   const isCurrentWeek = weekStart === getCurrentWeekStart()
 
   useEffect(() => { loadBase() }, [])
-  useEffect(() => { loadAllocations() }, [weekStart])
+  useEffect(() => { loadWeekData() }, [weekStart])
 
   async function loadBase() {
-    const [acc, inc, exp] = await Promise.all([
+    const [acc, inc, exp, logs] = await Promise.all([
       window.api.accounts.getAll(),
       window.api.income.getAll(),
       window.api.expenses.getAll(),
+      window.api.balances.getLatest(),
     ])
     setAccounts(acc)
     setIncome(inc)
     setExpenses(exp)
+    setLatestLogs(logs)
   }
 
-  async function loadAllocations() {
-    const allocs = await window.api.allocations.getWeek(weekStart)
-    setAllocations(allocs)
+  async function loadWeekData() {
+    const tx = await (window.api as any).transfers.getWeek(weekStart) as Transfer[]
+    setTransfers(tx)
+    setDrafts({})
   }
 
-  const weeklyIncome = income.reduce((sum, s) => sum + toWeeklyAmount(s.amount, s.frequency), 0)
+  // ── Money flow analysis ───────────────────────────────────────────────────
 
-  function getAccountWeeklyBase(accountId: number): number {
-    return expenses
-      // Match by save account (where money should land this week), with legacy account_id fallback
-      .filter(e => (e.save_account_id ?? e.account_id) === accountId)
-      .reduce((sum, e) => sum + toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0), 0)
+  // For each (envelope → debit account) routing, group bills and compute the move amount
+  type Route = {
+    fromAccount: Account
+    toAccount: Account
+    bills: Expense[]
+    weeklyAmount: number
+    transfers: Transfer[]   // transfers already made this week for this route
+    transferred: number      // sum of those
   }
 
-  function getAccountAllocation(accountId: number): WeeklyAllocation | undefined {
-    return allocations.find(a => a.account_id === accountId)
-  }
-
-  function getBufferForAccount(acc: Account): number {
-    return buffers[acc.id] ?? acc.buffer_percent
-  }
-
-  function getAllocatedAmount(acc: Account): number {
-    const base = getAccountWeeklyBase(acc.id)
-    const bufferPct = getBufferForAccount(acc)
-    return base * (1 + bufferPct / 100)
-  }
-
-  const totalAllocated = accounts.reduce((sum, acc) => sum + getAllocatedAmount(acc), 0)
-  const freeCashflow = weeklyIncome - totalAllocated
-  const allFunded = accounts.length > 0 && accounts.every(acc => {
-    const alloc = getAccountAllocation(acc.id)
-    return alloc?.funded === 1
-  })
-
-  async function toggleFunded(acc: Account) {
-    const alloc = getAccountAllocation(acc.id)
-    const planned = getAllocatedAmount(acc)
-    const bufferAmount = getAccountWeeklyBase(acc.id) * (getBufferForAccount(acc) / 100)
-
-    if (!alloc) {
-      const saved = await window.api.allocations.upsert({
-        week_start: weekStart,
-        account_id: acc.id,
-        planned_amount: planned,
-        buffer_amount: bufferAmount,
-      })
-      if (saved) {
-        await window.api.allocations.setFunded((saved as WeeklyAllocation).id, true)
-      }
-    } else {
-      await window.api.allocations.setFunded(alloc.id, alloc.funded !== 1)
-    }
-    loadAllocations()
-  }
-
-  async function markAllFunded() {
-    for (const acc of accounts) {
-      const alloc = getAccountAllocation(acc.id)
-      const planned = getAllocatedAmount(acc)
-      const bufferAmount = getAccountWeeklyBase(acc.id) * (getBufferForAccount(acc) / 100)
-      if (!alloc) {
-        const saved = await window.api.allocations.upsert({
-          week_start: weekStart, account_id: acc.id, planned_amount: planned, buffer_amount: bufferAmount,
-        })
-        if (saved) await window.api.allocations.setFunded((saved as WeeklyAllocation).id, true)
-      } else if (alloc.funded !== 1) {
-        await window.api.allocations.setFunded(alloc.id, true)
+  const routes = useMemo<Route[]>(() => {
+    const map = new Map<string, Route>()
+    for (const e of expenses) {
+      const fromId = e.save_account_id ?? e.account_id
+      const toId = e.debit_account_id
+      if (!fromId || !toId || fromId === toId) continue
+      const fromAccount = accounts.find(a => a.id === fromId)
+      const toAccount = accounts.find(a => a.id === toId)
+      if (!fromAccount || !toAccount) continue
+      const key = `${fromId}-${toId}`
+      const weekly = toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0)
+      const existing = map.get(key)
+      if (existing) {
+        existing.bills.push(e)
+        existing.weeklyAmount += weekly
+      } else {
+        map.set(key, { fromAccount, toAccount, bills: [e], weeklyAmount: weekly, transfers: [], transferred: 0 })
       }
     }
-    loadAllocations()
+    // Attach transfers already made this week to their routes
+    for (const t of transfers) {
+      const key = `${t.from_account_id}-${t.to_account_id}`
+      const r = map.get(key)
+      if (r) {
+        r.transfers.push(t)
+        r.transferred += t.amount
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.toAccount.name.localeCompare(b.toAccount.name))
+  }, [expenses, accounts, transfers])
+
+  // Accumulating accounts: envelopes whose bills have NO debit account (paid direct or piling)
+  type Accumulator = { account: Account; bills: Expense[]; weeklyFill: number }
+  const accumulators = useMemo<Accumulator[]>(() => {
+    const map = new Map<number, Accumulator>()
+    for (const e of expenses) {
+      const fromId = e.save_account_id ?? e.account_id
+      if (!fromId) continue
+      // Skip if it has a debit destination (those are routes)
+      if (e.debit_account_id && e.debit_account_id !== fromId) continue
+      const account = accounts.find(a => a.id === fromId)
+      if (!account) continue
+      const weekly = toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0)
+      const existing = map.get(account.id)
+      if (existing) {
+        existing.bills.push(e)
+        existing.weeklyFill += weekly
+      } else {
+        map.set(account.id, { account, bills: [e], weeklyFill: weekly })
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.account.name.localeCompare(b.account.name))
+  }, [expenses, accounts])
+
+  // ── Pay context (real cash arriving this week, not weekly average) ────────
+
+  const payingThisWeek = income.filter(s =>
+    s.payday_reference && isPayWeek(s.payday_reference, s.frequency, weekStart)
+  )
+  const cashArrivingThisWeek = payingThisWeek.reduce((s, p) => s + p.amount, 0)
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  async function handleSaveTransfer(route: Route) {
+    const key = `${route.fromAccount.id}-${route.toAccount.id}`
+    const raw = drafts[key]
+    const amount = parseFloat(raw)
+    if (!amount || amount <= 0) {
+      toast('Enter an amount greater than $0', 'danger')
+      return
+    }
+    await (window.api as any).transfers.save({
+      from_account_id: route.fromAccount.id,
+      to_account_id: route.toAccount.id,
+      amount,
+      week_start: weekStart,
+    })
+    toast(`Logged ${formatCurrency(amount)}: ${route.fromAccount.name} → ${route.toAccount.name}`)
+    setDrafts(d => ({ ...d, [key]: '' }))
+    loadWeekData()
+  }
+
+  async function handleDeleteTransfer(id: number) {
+    await (window.api as any).transfers.delete(id)
+    toast('Transfer removed', 'danger')
+    loadWeekData()
   }
 
   function prevWeek() {
-    const d = new Date(weekStart + 'T00:00:00')
-    setWeekStart(format(subDays(d, 7), 'yyyy-MM-dd'))
+    setWeekStart(format(subDays(new Date(weekStart + 'T00:00:00'), 7), 'yyyy-MM-dd'))
   }
-
   function nextWeek() {
-    const d = new Date(weekStart + 'T00:00:00')
-    setWeekStart(format(addDays(d, 7), 'yyyy-MM-dd'))
+    setWeekStart(format(addDays(new Date(weekStart + 'T00:00:00'), 7), 'yyyy-MM-dd'))
   }
 
-  const fundedCount = accounts.filter(acc => getAccountAllocation(acc.id)?.funded === 1).length
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="p-6 space-y-6 animate-fade-in">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-text-primary">Weekly Allocation</h1>
-          <p className="text-sm text-text-secondary mt-1">How much to move into each account this week.</p>
+          <h1 className="text-2xl font-semibold text-text-primary">Weekly Move</h1>
+          <p className="text-sm text-text-secondary mt-1">Move money from envelopes (Bank 1) to debit accounts (Bank 2).</p>
         </div>
         <div className="flex items-center gap-2">
           <Button size="icon" variant="outline" onClick={prevWeek}><ChevronLeft size={15} /></Button>
@@ -134,136 +170,183 @@ export default function WeeklyAllocation() {
         </div>
       </div>
 
-      {/* Payday banner */}
-      {(() => {
-        const paying = income.filter(s => s.payday_reference && isPayWeek(s.payday_reference, s.frequency, weekStart))
-        if (paying.length === 0) return null
-        const names = paying.map(s => s.person_name).join(' & ')
-        const totalPay = paying.reduce((sum, s) => sum + s.amount, 0)
-        return (
-          <div className="bg-accent/10 border border-accent/30 rounded-lg p-4 flex items-center gap-3">
-            <DollarSign size={18} className="text-accent flex-shrink-0" />
-            <div>
-              <p className="text-sm font-semibold text-text-primary">
-                {paying.length > 1 ? 'Both get paid' : `${names} gets paid`} this week
-              </p>
-              <p className="text-xs text-text-secondary mt-0.5">
-                {paying.map(s => `${s.person_name}: ${formatCurrency(s.amount)} (${s.frequency})`).join(' · ')}
-                {paying.length > 1 && <span className="text-accent font-medium"> · {formatCurrency(totalPay)} total arriving</span>}
-              </p>
-            </div>
-          </div>
-        )
-      })()}
-
-      {/* Progress bar */}
-      {accounts.length > 0 && (
-        <div className="bg-surface rounded-lg p-4 border border-border flex items-center justify-between gap-6">
+      {/* Pay context */}
+      {payingThisWeek.length > 0 ? (
+        <div className="bg-accent/10 border border-accent/30 rounded-lg p-4 flex items-center gap-3">
+          <DollarSign size={18} className="text-accent flex-shrink-0" />
           <div>
-            <p className="text-xs text-text-secondary">Accounts funded</p>
-            <p className="text-xl font-semibold text-text-primary mt-0.5">{fundedCount} / {accounts.length}</p>
+            <p className="text-sm font-semibold text-text-primary">
+              {payingThisWeek.length > 1 ? 'Both pays arrive' : `${payingThisWeek[0].person_name}'s pay arrives`} this week
+            </p>
+            <p className="text-xs text-text-secondary mt-0.5">
+              {payingThisWeek.map(p => `${p.person_name}: ${formatCurrency(p.amount)}`).join(' · ')}
+              <span className="text-accent font-medium"> · {formatCurrency(cashArrivingThisWeek)} arriving</span>
+            </p>
           </div>
-          <div className="flex-1 bg-surface-hover rounded-full h-2">
-            <div
-              className="h-2 rounded-full bg-accent transition-all duration-500"
-              style={{ width: `${accounts.length > 0 ? (fundedCount / accounts.length) * 100 : 0}%` }}
-            />
-          </div>
-          {!allFunded && accounts.length > 0 && (
-            <Button size="sm" variant="outline" onClick={markAllFunded}>Mark all done</Button>
-          )}
-          {allFunded && (
-            <div className="flex items-center gap-1.5 text-success text-sm font-medium">
-              <CheckCircle2 size={16} />
-              All funded!
-            </div>
-          )}
+        </div>
+      ) : (
+        <div className="bg-surface-2/40 border border-border rounded-lg p-4 flex items-center gap-3">
+          <DollarSign size={18} className="text-text-muted flex-shrink-0" />
+          <p className="text-sm text-text-secondary">No pay arriving this week — running on what's already in envelopes.</p>
         </div>
       )}
 
-      {/* Accounts list */}
-      {accounts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <p className="text-text-secondary text-sm">No accounts set up yet.</p>
-          <p className="text-text-muted text-xs mt-1">Go to Budget Setup → Accounts to add your first account.</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {accounts.map(acc => {
-            const alloc = getAccountAllocation(acc.id)
-            const isFunded = alloc?.funded === 1
-            const base = getAccountWeeklyBase(acc.id)
-            const bufferPct = getBufferForAccount(acc)
-            const bufferAmount = base * (bufferPct / 100)
-            const total = base + bufferAmount
+      {/* Routes (transfers to make) */}
+      {routes.length > 0 ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider">Transfers to make</h2>
+            <p className="text-[11px] text-text-muted">
+              {routes.filter(r => r.transferred >= r.weeklyAmount * 0.95).length} / {routes.length} done
+            </p>
+          </div>
+          {routes.map(route => {
+            const key = `${route.fromAccount.id}-${route.toAccount.id}`
+            const draft = drafts[key] ?? ''
+            const suggested = route.weeklyAmount
+            const remaining = Math.max(0, suggested - route.transferred)
+            const isComplete = route.transferred >= suggested * 0.95
+            const destLog = latestLogs.find(l => l.account_id === route.toAccount.id)
 
             return (
-              <Card
-                key={acc.id}
-                className={`transition-all duration-200 ${isFunded ? 'border-success/20 bg-success/5' : 'hover:border-border-subtle'}`}
-              >
+              <Card key={key} className={isComplete ? 'border-success/30' : ''}>
                 <CardContent className="pt-4 pb-4">
-                  <div className="flex items-center justify-between gap-4">
-                    {/* Left: account info */}
+                  {/* Route header */}
+                  <div className="flex items-center justify-between gap-4 mb-3">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <button
-                        onClick={() => toggleFunded(acc)}
-                        className="flex-shrink-0 transition-transform hover:scale-110"
-                      >
-                        {isFunded
-                          ? <CheckCircle2 size={22} className="text-success" />
-                          : <Circle size={22} className="text-text-muted" />
-                        }
-                      </button>
-                      <div className="w-2.5 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: acc.color }} />
-                      <div className="min-w-0">
-                        <p className={`text-sm font-medium ${isFunded ? 'text-text-secondary line-through' : 'text-text-primary'}`}>
-                          {acc.name}
-                        </p>
-                        <p className="text-xs text-text-muted">
-                          Base {formatCurrency(base)}{bufferPct > 0 && ` + ${bufferPct}% buffer`}
-                        </p>
+                      <div className="flex items-center gap-2 text-sm">
+                        <div className="w-2 h-6 rounded-full" style={{ backgroundColor: route.fromAccount.color }} />
+                        <span className="font-medium text-text-primary">{route.fromAccount.name}</span>
+                        <ArrowRight size={14} className="text-text-muted" />
+                        <div className="w-2 h-6 rounded-full" style={{ backgroundColor: route.toAccount.color }} />
+                        <span className="font-medium text-text-primary">{route.toAccount.name}</span>
                       </div>
                     </div>
+                    {isComplete && <CheckCircle2 size={18} className="text-success flex-shrink-0" />}
+                  </div>
 
-                    {/* Right: amount */}
-                    <div className="text-right flex-shrink-0">
-                      <p className={`text-lg font-semibold ${isFunded ? 'text-text-muted' : 'text-text-primary'}`}>
-                        {formatCurrency(total)}
+                  {/* Numbers */}
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    <div className="bg-surface-2 rounded-lg p-2.5 border border-border">
+                      <p className="text-[10px] text-text-muted uppercase tracking-wider">Suggested</p>
+                      <p className="text-sm font-semibold text-text-primary tabular-nums mt-0.5">{formatCurrency(suggested)}</p>
+                    </div>
+                    <div className="bg-surface-2 rounded-lg p-2.5 border border-border">
+                      <p className="text-[10px] text-text-muted uppercase tracking-wider">Already moved</p>
+                      <p className={`text-sm font-semibold tabular-nums mt-0.5 ${route.transferred > 0 ? 'text-success' : 'text-text-muted'}`}>
+                        {formatCurrency(route.transferred)}
                       </p>
-                      {bufferAmount > 0 && (
-                        <p className="text-[11px] text-text-muted">incl. {formatCurrency(bufferAmount)} buffer</p>
-                      )}
+                    </div>
+                    <div className="bg-surface-2 rounded-lg p-2.5 border border-border">
+                      <p className="text-[10px] text-text-muted uppercase tracking-wider">Destination balance</p>
+                      <p className="text-sm font-semibold text-text-primary tabular-nums mt-0.5">
+                        {destLog ? formatCurrency(destLog.balance) : '—'}
+                      </p>
                     </div>
                   </div>
+
+                  {/* Bills covered */}
+                  <div className="mb-3">
+                    <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1.5">Covers ({route.bills.length} bills)</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {route.bills.map(bill => (
+                        <span key={bill.id} className="text-[11px] bg-surface-2 border border-border rounded px-2 py-0.5 text-text-secondary">
+                          {bill.name} <span className="text-text-muted">·</span> {formatCurrency(bill.amount)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Action: enter actual amount */}
+                  {!isComplete && (
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1">
+                        <Input
+                          label={`Actual moved this week (suggested ${formatCurrency(remaining)})`}
+                          type="number"
+                          prefix="$"
+                          placeholder={remaining.toFixed(2)}
+                          value={draft}
+                          onChange={e => setDrafts(d => ({ ...d, [key]: e.target.value }))}
+                        />
+                      </div>
+                      <Button onClick={() => handleSaveTransfer(route)} disabled={!draft}>
+                        Log transfer
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Logged transfers list */}
+                  {route.transfers.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border space-y-1">
+                      {route.transfers.map(t => (
+                        <div key={t.id} className="flex items-center justify-between text-[11px]">
+                          <span className="text-text-secondary">
+                            {format(new Date(t.transfer_date), 'EEE d MMM, h:mm a')}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-text-primary tabular-nums font-medium">{formatCurrency(t.amount)}</span>
+                            <button
+                              onClick={() => handleDeleteTransfer(t.id)}
+                              className="text-text-muted hover:text-danger transition-colors p-0.5"
+                              title="Remove this transfer"
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )
           })}
         </div>
+      ) : (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <Wallet size={28} className="text-text-muted mx-auto mb-3" />
+            <p className="text-sm text-text-secondary">No transfers configured yet.</p>
+            <p className="text-xs text-text-muted mt-1">In Budget Setup → Expenses, set both "Saves to" and "Debits from" on each bill to build your money flow.</p>
+          </CardContent>
+        </Card>
       )}
 
-      {/* Summary */}
-      {accounts.length > 0 && (
-        <div className="grid grid-cols-3 gap-4 pt-2 border-t border-border">
-          <SummaryItem label="Weekly Income" value={weeklyIncome} color="text-success" />
-          <SummaryItem label="Total to Move" value={totalAllocated} color="text-text-primary" />
-          <SummaryItem
-            label="Free Cashflow"
-            value={freeCashflow}
-            color={freeCashflow >= 0 ? 'text-success' : 'text-danger'}
-          />
+      {/* Accumulating accounts */}
+      {accumulators.length > 0 && (
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider">Accumulating</h2>
+            <p className="text-[11px] text-text-muted mt-0.5">Envelopes that fill weekly but don't transfer to Bank 2 — paid direct or building up over time.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {accumulators.map(a => {
+              const log = latestLogs.find(l => l.account_id === a.account.id)
+              return (
+                <Card key={a.account.id} className="border-l-4" style={{ borderLeftColor: a.account.color }}>
+                  <CardContent className="pt-3.5 pb-3.5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Coffee size={13} className="text-text-muted" />
+                          <p className="text-sm font-medium text-text-primary">{a.account.name}</p>
+                        </div>
+                        <p className="text-[11px] text-text-muted mt-0.5">
+                          Fills {formatCurrency(a.weeklyFill)}/wk · {a.bills.length} bill{a.bills.length === 1 ? '' : 's'}
+                        </p>
+                      </div>
+                      <p className="text-base font-semibold text-text-primary tabular-nums">
+                        {log ? formatCurrency(log.balance) : '—'}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function SummaryItem({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="text-center p-4 bg-surface rounded-lg border border-border">
-      <p className="text-xs text-text-muted uppercase tracking-wider">{label}</p>
-      <p className={`text-xl font-semibold mt-1 ${color}`}>{formatCurrency(value)}</p>
     </div>
   )
 }

@@ -50,6 +50,13 @@ contextBridge.exposeInMainWorld('api', {
     setFunded: (id: number, funded: boolean) => ipcRenderer.invoke('allocations:setFunded', id, funded),
   },
 
+  // Transfers (Weekly Move)
+  transfers: {
+    getWeek: (weekStart: string) => ipcRenderer.invoke('transfers:getWeek', weekStart),
+    save: (data: unknown) => ipcRenderer.invoke('transfers:save', data),
+    delete: (id: number) => ipcRenderer.invoke('transfers:delete', id),
+  },
+
   // Goals
   goals: {
     getAll: () => ipcRenderer.invoke('goals:getAll'),

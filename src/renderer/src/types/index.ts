@@ -101,6 +101,28 @@ export interface BalanceLogInput {
   notes?: string
 }
 
+export interface Transfer {
+  id: number
+  from_account_id: number
+  to_account_id: number
+  amount: number
+  week_start: string
+  notes?: string
+  transfer_date: string
+  from_account_name?: string
+  from_account_color?: string
+  to_account_name?: string
+  to_account_color?: string
+}
+
+export interface TransferInput {
+  from_account_id: number
+  to_account_id: number
+  amount: number
+  week_start: string
+  notes?: string
+}
+
 export interface WeeklyAllocation {
   id: number
   week_start: string

@@ -101,6 +101,16 @@ function initSchema(db: Database.Database): void {
       snapshot_date TEXT NOT NULL DEFAULT (date('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS transfers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      from_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      to_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      amount REAL NOT NULL,
+      week_start TEXT NOT NULL,
+      notes TEXT,
+      transfer_date TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS test_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       version TEXT NOT NULL,
@@ -342,6 +352,34 @@ export function dbGetGoalSnapshots(goalId: number) {
   return getDb().prepare(
     'SELECT * FROM goal_snapshots WHERE goal_id = ? ORDER BY snapshot_date'
   ).all(goalId)
+}
+
+// ─── Transfers (Weekly Move) ──────────────────────────────────────────────────
+
+export function dbGetTransfersForWeek(weekStart: string) {
+  return getDb().prepare(`
+    SELECT t.*,
+      fa.name as from_account_name, fa.color as from_account_color,
+      ta.name as to_account_name, ta.color as to_account_color
+    FROM transfers t
+    LEFT JOIN accounts fa ON t.from_account_id = fa.id
+    LEFT JOIN accounts ta ON t.to_account_id = ta.id
+    WHERE t.week_start = ?
+    ORDER BY t.transfer_date DESC
+  `).all(weekStart)
+}
+
+export function dbSaveTransfer(data: {
+  from_account_id: number; to_account_id: number; amount: number; week_start: string; notes?: string
+}) {
+  const result = getDb().prepare(
+    'INSERT INTO transfers (from_account_id, to_account_id, amount, week_start, notes) VALUES (?, ?, ?, ?, ?)'
+  ).run(data.from_account_id, data.to_account_id, data.amount, data.week_start, data.notes ?? null)
+  return getDb().prepare('SELECT * FROM transfers WHERE id = ?').get(result.lastInsertRowid)
+}
+
+export function dbDeleteTransfer(id: number) {
+  getDb().prepare('DELETE FROM transfers WHERE id = ?').run(id)
 }
 
 // ─── Test Runs ────────────────────────────────────────────────────────────────

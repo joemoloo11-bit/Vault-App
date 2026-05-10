@@ -42,6 +42,26 @@ function formatMonthsAhead(months: number): string {
   return `${days}d ahead`
 }
 
+type CoverageUnit = 'dollars' | 'weeks' | 'months'
+
+function formatCoverage(months: number, unit: CoverageUnit, dollarValue: number): string {
+  if (unit === 'dollars') return formatCurrency(dollarValue)
+  if (unit === 'weeks') {
+    const weeks = months * 4.33
+    if (weeks >= 52) return `${(weeks / 52).toFixed(1)}y ahead`
+    if (weeks >= 1) return `${weeks.toFixed(1)}wk ahead`
+    return `${Math.round(weeks * 7)}d ahead`
+  }
+  return formatMonthsAhead(months)
+}
+
+function getCoveredUntil(months: number): Date {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() + Math.round(months * 30))
+  return d
+}
+
 interface AccountWithData {
   account: Account
   latestLog?: BalanceLog
@@ -60,6 +80,7 @@ export default function AccountTracker() {
   const [simWithdraw, setSimWithdraw] = useState('')
   const [historyAccountId, setHistoryAccountId] = useState<number | null>(null)
   const [confirmDeleteLogId, setConfirmDeleteLogId] = useState<number | null>(null)
+  const [coverageUnit, setCoverageUnit] = useState<CoverageUnit>('months')
   const { toast } = useToast()
 
   useEffect(() => { loadAll() }, [])
@@ -162,7 +183,22 @@ export default function AccountTracker() {
           <h1 className="text-2xl font-semibold text-text-primary">Account Tracker</h1>
           <p className="text-sm text-text-secondary mt-1">Log balances and see what's covered by your upcoming bills.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          <div className="flex items-center bg-surface-2 rounded-md border border-border p-0.5 mr-1">
+            {(['dollars', 'weeks', 'months'] as const).map(unit => (
+              <button
+                key={unit}
+                onClick={() => setCoverageUnit(unit)}
+                className={`text-[11px] px-2 py-1 rounded transition-colors capitalize ${
+                  coverageUnit === unit
+                    ? 'bg-accent text-white'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                {unit === 'dollars' ? '$' : unit}
+              </button>
+            ))}
+          </div>
           <Dialog open={simulatorOpen} onOpenChange={setSimulatorOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm">Shortfall Simulator</Button>
@@ -396,6 +432,11 @@ export default function AccountTracker() {
                           const aheadColor = months === null ? 'text-text-muted' :
                             months >= 1 ? 'text-success' :
                             months >= 0.5 ? 'text-warning' : 'text-danger'
+                          // Per-bill dollar share of balance (proportional to its monthly allocation)
+                          const totalMonthlyAlloc = bills.reduce((s, b) => s + toMonthly(b.allocation_amount ?? b.amount, b.frequency), 0)
+                          const billMonthlyAlloc = toMonthly(bill.allocation_amount ?? bill.amount, bill.frequency)
+                          const billDollarShare = totalMonthlyAlloc > 0 ? (billMonthlyAlloc / totalMonthlyAlloc) * balance : 0
+                          const coveredUntil = months !== null && months > 0 ? getCoveredUntil(months) : null
                           return (
                             <div key={bill.id} className="flex items-center gap-3 bg-surface-2 rounded-lg px-3 py-2 border border-border">
                               <div className="flex-1 min-w-0">
@@ -421,9 +462,14 @@ export default function AccountTracker() {
                               </div>
                               <div className="text-right flex-shrink-0">
                                 {months !== null ? (
-                                  <span className={`text-sm font-semibold ${aheadColor}`}>
-                                    {formatMonthsAhead(months)}
-                                  </span>
+                                  <>
+                                    <span className={`text-sm font-semibold ${aheadColor}`}>
+                                      {formatCoverage(months, coverageUnit, billDollarShare)}
+                                    </span>
+                                    {coveredUntil && (
+                                      <p className="text-[10px] text-text-muted mt-0.5">until {format(coveredUntil, 'd MMM yyyy')}</p>
+                                    )}
+                                  </>
                                 ) : (
                                   <span className="text-xs text-text-muted">log balance to see</span>
                                 )}

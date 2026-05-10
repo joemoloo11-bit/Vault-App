@@ -8,6 +8,20 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.10.0',
+    date: '2026-05-09',
+    title: 'Weekly Move + Coverage Detail',
+    highlights: [
+      '"Weekly" page rebuilt as Weekly Move — organised around the actual transfer (envelope → debit account), not a flat list of accounts.',
+      'Each transfer card shows: source envelope, destination, suggested amount, what bills are covered, current destination balance, and how much you\'ve already moved this week.',
+      'Capture the ACTUAL dollar amount you moved (not a checkbox). Multiple transfers per route per week supported. Delete individual entries if you mistype.',
+      'Pay-week banner now shows the real cash arriving this week (e.g. "James\'s pay arrives this week — $3,463"), not the weekly average.',
+      '"Accumulating" section: envelopes that don\'t transfer to Bank 2 (groceries, dog medical, etc) — shown separately so they don\'t clutter the transfer ritual.',
+      'Tracker has a $ / Weeks / Months toggle in the header — switch how coverage is displayed across all bills.',
+      'Each bill now shows a "covered until DD MMM YYYY" date below the coverage badge so you can see exactly when each one runs out.',
+    ],
+  },
+  {
     version: '1.9.1',
     date: '2026-05-09',
     title: 'Tracker Visual Cleanup',

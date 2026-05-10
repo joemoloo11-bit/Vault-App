@@ -10,6 +10,7 @@ import {
   dbGetExpenses, dbSaveExpense, dbUpdateExpense, dbDeleteExpense,
   dbGetBalanceLogs, dbGetLatestBalances, dbSaveBalanceLog, dbDeleteBalanceLog,
   dbGetWeeklyAllocations, dbUpsertWeeklyAllocation, dbSetAllocationFunded,
+  dbGetTransfersForWeek, dbSaveTransfer, dbDeleteTransfer,
   dbGetGoals, dbSaveGoal, dbUpdateGoal, dbDeleteGoal,
   dbSaveGoalSnapshot, dbGetGoalSnapshots,
   dbGetTestRuns, dbSaveTestRun, dbUpdateTestRun, dbDeleteTestRun
@@ -94,6 +95,11 @@ app.whenReady().then(() => {
   ipcMain.handle('allocations:getWeek', (_, weekStart) => dbGetWeeklyAllocations(weekStart))
   ipcMain.handle('allocations:upsert', (_, data) => dbUpsertWeeklyAllocation(data))
   ipcMain.handle('allocations:setFunded', (_, id, funded) => dbSetAllocationFunded(id, funded))
+
+  // ─── Transfers (Weekly Move) ──────────────────────────────────────────────
+  ipcMain.handle('transfers:getWeek', (_, weekStart) => dbGetTransfersForWeek(weekStart))
+  ipcMain.handle('transfers:save', (_, data) => dbSaveTransfer(data))
+  ipcMain.handle('transfers:delete', (_, id) => dbDeleteTransfer(id))
 
   // ─── Goals ────────────────────────────────────────────────────────────────
   ipcMain.handle('goals:getAll', () => dbGetGoals())
