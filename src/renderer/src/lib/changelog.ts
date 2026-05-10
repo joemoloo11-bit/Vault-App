@@ -8,6 +8,17 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.9.0',
+    date: '2026-05-09',
+    title: 'Account Depth — Balance History & Projection',
+    highlights: [
+      'Tracker account cards now show an inline balance sparkline — last 12 logs as a small line graph in the account\'s colour. Click it (or "View balance history") to open the full view.',
+      'New Balance History dialog: full-size line chart with all your logged balances + a dashed projection line for the next 4 weeks (calculated from weekly target minus assigned bills).',
+      'Three-stat summary on the history dialog: latest balance, projected balance in 4 weeks, and net per week.',
+      'List of every balance log with delete button — fix typos or remove bad entries; chart and projection update automatically.',
+    ],
+  },
+  {
     version: '1.8.1',
     date: '2026-05-09',
     title: 'Allocation $0 Fix',

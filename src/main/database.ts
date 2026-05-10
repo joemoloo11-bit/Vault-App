@@ -254,6 +254,10 @@ export function dbSaveBalanceLog(data: { account_id: number; balance: number; no
   return getDb().prepare('SELECT * FROM balance_logs WHERE id = ?').get(result.lastInsertRowid)
 }
 
+export function dbDeleteBalanceLog(id: number) {
+  getDb().prepare('DELETE FROM balance_logs WHERE id = ?').run(id)
+}
+
 // ─── Weekly Allocations ───────────────────────────────────────────────────────
 
 export function dbGetWeeklyAllocations(weekStart: string) {

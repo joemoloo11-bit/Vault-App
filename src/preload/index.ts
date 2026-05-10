@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('api', {
     getAll: (accountId?: number) => ipcRenderer.invoke('balances:getAll', accountId),
     getLatest: () => ipcRenderer.invoke('balances:getLatest'),
     save: (data: unknown) => ipcRenderer.invoke('balances:save', data),
+    delete: (id: number) => ipcRenderer.invoke('balances:delete', id),
   },
 
   // Weekly Allocations

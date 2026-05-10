@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Plus, AlertTriangle, CheckCircle2, XCircle, DollarSign } from 'lucide-react'
+import { Plus, AlertTriangle, CheckCircle2, XCircle, DollarSign, TrendingUp, Trash2 } from 'lucide-react'
+import { Line, LineChart, ResponsiveContainer, XAxis, YAxis, Tooltip, ReferenceLine } from 'recharts'
 import { Card, CardContent } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { Badge } from '@renderer/components/ui/badge'
 import { Dialog, DialogContent, DialogTrigger, DialogClose } from '@renderer/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@renderer/components/ui/select'
+import { ConfirmDialog } from '@renderer/components/ui/confirm-dialog'
+import { useToast } from '@renderer/components/ui/toast'
 import { formatCurrency, getDueDayLabel } from '@renderer/lib/utils'
 import { toWeeklyAmount } from '@renderer/types'
 import type { Account, BalanceLog, Expense } from '@renderer/types'
@@ -48,24 +51,42 @@ interface AccountWithData {
 export default function AccountTracker() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [latestLogs, setLatestLogs] = useState<BalanceLog[]>([])
+  const [allLogs, setAllLogs] = useState<BalanceLog[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [logOpen, setLogOpen] = useState(false)
   const [simulatorOpen, setSimulatorOpen] = useState(false)
   const [quickBalances, setQuickBalances] = useState<Record<number, { balance: string; notes: string }>>({})
   const [simAccountId, setSimAccountId] = useState<string>('none')
   const [simWithdraw, setSimWithdraw] = useState('')
+  const [historyAccountId, setHistoryAccountId] = useState<number | null>(null)
+  const [confirmDeleteLogId, setConfirmDeleteLogId] = useState<number | null>(null)
+  const { toast } = useToast()
 
   useEffect(() => { loadAll() }, [])
 
   async function loadAll() {
-    const [acc, logs, exp] = await Promise.all([
+    const [acc, logs, allLog, exp] = await Promise.all([
       window.api.accounts.getAll(),
       window.api.balances.getLatest(),
+      window.api.balances.getAll(),
       window.api.expenses.getAll(),
     ])
     setAccounts(acc)
     setLatestLogs(logs)
+    setAllLogs(allLog as BalanceLog[])
     setExpenses(exp)
+  }
+
+  function getAccountHistory(accountId: number): BalanceLog[] {
+    return allLogs
+      .filter(l => l.account_id === accountId)
+      .sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime())
+  }
+
+  async function handleDeleteLog(id: number) {
+    await (window.api as any).balances.delete(id)
+    toast('Log entry deleted', 'danger')
+    await loadAll()
   }
 
   function openQuickLog() {
@@ -301,6 +322,33 @@ export default function AccountTracker() {
                         )}
                       </div>
                     </div>
+                    {/* Sparkline (clickable → history) */}
+                    {(() => {
+                      const history = getAccountHistory(account.id)
+                      if (history.length < 2) return null
+                      const sparkData = history.slice(-12).map(l => ({ balance: l.balance }))
+                      return (
+                        <button
+                          onClick={() => setHistoryAccountId(account.id)}
+                          className="hidden md:block w-32 h-10 hover:opacity-80 transition-opacity flex-shrink-0"
+                          title="Click to see full history"
+                        >
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={sparkData} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+                              <Line
+                                type="monotone"
+                                dataKey="balance"
+                                stroke={account.color}
+                                strokeWidth={1.5}
+                                dot={false}
+                                isAnimationActive={false}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </button>
+                      )
+                    })()}
+
                     <div className="text-right flex items-start gap-3">
                       <div>
                         <p className="text-2xl font-semibold text-text-primary tabular-nums">
@@ -316,6 +364,22 @@ export default function AccountTracker() {
                       </Badge>
                     </div>
                   </div>
+
+                  {(() => {
+                    const history = getAccountHistory(account.id)
+                    if (history.length === 0) return null
+                    return (
+                      <div className="mt-3">
+                        <button
+                          onClick={() => setHistoryAccountId(account.id)}
+                          className="text-[11px] text-accent hover:text-accent/80 inline-flex items-center gap-1 transition-colors"
+                        >
+                          <TrendingUp size={11} />
+                          View balance history ({history.length} {history.length === 1 ? 'log' : 'logs'})
+                        </button>
+                      </div>
+                    )
+                  })()}
 
                   {bills.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-border">
@@ -371,6 +435,118 @@ export default function AccountTracker() {
           })}
         </div>
       )}
+
+      {/* Balance history modal */}
+      {(() => {
+        const account = accounts.find(a => a.id === historyAccountId)
+        if (!account) return null
+        const history = getAccountHistory(account.id)
+        const accountBills = expenses.filter(e => (e.save_account_id ?? e.account_id) === account.id)
+        const weeklyBillsForAcc = accountBills.reduce((s, e) => s + toWeeklyAmount(e.amount, e.frequency), 0)
+        const weeklyTarget = account.weekly_target * (1 + (account.buffer_percent ?? 0) / 100)
+        const netWeekly = weeklyTarget - weeklyBillsForAcc
+
+        // Build chart data: history then 4-week projection
+        const chartData = history.map(l => ({
+          date: format(new Date(l.logged_at), 'd MMM'),
+          balance: l.balance,
+          projected: null as number | null,
+        }))
+        const lastBalance = history.length > 0 ? history[history.length - 1].balance : 0
+        const lastDate = history.length > 0 ? new Date(history[history.length - 1].logged_at) : new Date()
+        // Pin the last historical point as the start of the projection so the dashed line is continuous
+        if (chartData.length > 0) chartData[chartData.length - 1].projected = lastBalance
+        for (let w = 1; w <= 4; w++) {
+          const projDate = new Date(lastDate)
+          projDate.setDate(projDate.getDate() + w * 7)
+          chartData.push({
+            date: format(projDate, 'd MMM'),
+            balance: null as any,
+            projected: lastBalance + netWeekly * w,
+          })
+        }
+
+        return (
+          <Dialog open={historyAccountId !== null} onOpenChange={(o) => !o && setHistoryAccountId(null)}>
+            <DialogContent
+              title={`${account.name} — Balance History`}
+              description="Past logs as a solid line; the dashed line projects 4 weeks ahead based on weekly target minus assigned bills."
+              className="max-w-3xl"
+            >
+              <div className="space-y-4">
+                <div className="h-64 -mx-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+                      <XAxis dataKey="date" stroke="#64748B" tick={{ fontSize: 10 }} />
+                      <YAxis stroke="#64748B" tick={{ fontSize: 10 }} tickFormatter={(v) => `$${(v / 1000).toFixed(1)}k`} width={50} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#161B22', border: '1px solid #21262D', borderRadius: 8, fontSize: 12, color: '#F0F6FC' }}
+                        formatter={(v: number | null) => v == null ? null : formatCurrency(v)}
+                      />
+                      {history.length > 0 && (
+                        <ReferenceLine x={format(lastDate, 'd MMM')} stroke="#64748B" strokeDasharray="2 2" />
+                      )}
+                      <Line type="monotone" dataKey="balance" stroke={account.color} strokeWidth={2} dot={{ r: 3 }} connectNulls={false} isAnimationActive={false} name="Logged" />
+                      <Line type="monotone" dataKey="projected" stroke={account.color} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls={true} isAnimationActive={false} name="Projected" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 text-xs">
+                  <div className="bg-surface-2 rounded-lg p-2.5 border border-border">
+                    <p className="text-text-muted text-[10px] uppercase tracking-wider">Latest</p>
+                    <p className="text-text-primary font-semibold mt-0.5 tabular-nums">{formatCurrency(lastBalance)}</p>
+                  </div>
+                  <div className="bg-surface-2 rounded-lg p-2.5 border border-border">
+                    <p className="text-text-muted text-[10px] uppercase tracking-wider">In 4 weeks (projected)</p>
+                    <p className={`font-semibold mt-0.5 tabular-nums ${netWeekly >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {formatCurrency(lastBalance + netWeekly * 4)}
+                    </p>
+                  </div>
+                  <div className="bg-surface-2 rounded-lg p-2.5 border border-border">
+                    <p className="text-text-muted text-[10px] uppercase tracking-wider">Net per week</p>
+                    <p className={`font-semibold mt-0.5 tabular-nums ${netWeekly >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {netWeekly >= 0 ? '+' : ''}{formatCurrency(netWeekly)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="border-t border-border pt-3">
+                  <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-2">All logs ({history.length})</p>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {[...history].reverse().map(log => (
+                      <div key={log.id} className="flex items-center justify-between gap-2 bg-surface-2 rounded-lg px-3 py-2 border border-border">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm tabular-nums text-text-primary">{formatCurrency(log.balance)}</p>
+                          <p className="text-[10px] text-text-muted">
+                            {format(new Date(log.logged_at), 'EEE d MMM yyyy, h:mm a')}
+                            {log.notes && ` · ${log.notes}`}
+                          </p>
+                        </div>
+                        <Button size="icon" variant="ghost" onClick={() => setConfirmDeleteLogId(log.id)}>
+                          <Trash2 size={13} className="text-danger" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <DialogClose asChild>
+                  <Button variant="outline" className="w-full">Close</Button>
+                </DialogClose>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )
+      })()}
+
+      <ConfirmDialog
+        open={confirmDeleteLogId !== null}
+        onOpenChange={o => !o && setConfirmDeleteLogId(null)}
+        title="Delete this balance log?"
+        description="This will permanently remove this entry from the account's history. The chart and projection will recalculate."
+        onConfirm={() => confirmDeleteLogId !== null && handleDeleteLog(confirmDeleteLogId)}
+      />
     </div>
   )
 }

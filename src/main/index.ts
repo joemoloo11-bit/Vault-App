@@ -8,7 +8,7 @@ import {
   dbGetAccounts, dbSaveAccount, dbUpdateAccount, dbDeleteAccount,
   dbGetIncomeSources, dbSaveIncomeSource, dbUpdateIncomeSource, dbDeleteIncomeSource,
   dbGetExpenses, dbSaveExpense, dbUpdateExpense, dbDeleteExpense,
-  dbGetBalanceLogs, dbGetLatestBalances, dbSaveBalanceLog,
+  dbGetBalanceLogs, dbGetLatestBalances, dbSaveBalanceLog, dbDeleteBalanceLog,
   dbGetWeeklyAllocations, dbUpsertWeeklyAllocation, dbSetAllocationFunded,
   dbGetGoals, dbSaveGoal, dbUpdateGoal, dbDeleteGoal,
   dbSaveGoalSnapshot, dbGetGoalSnapshots,
@@ -88,6 +88,7 @@ app.whenReady().then(() => {
   ipcMain.handle('balances:getAll', (_, accountId) => dbGetBalanceLogs(accountId))
   ipcMain.handle('balances:getLatest', () => dbGetLatestBalances())
   ipcMain.handle('balances:save', (_, data) => dbSaveBalanceLog(data))
+  ipcMain.handle('balances:delete', (_, id) => dbDeleteBalanceLog(id))
 
   // ─── Weekly Allocations ────────────────────────────────────────────────────
   ipcMain.handle('allocations:getWeek', (_, weekStart) => dbGetWeeklyAllocations(weekStart))
