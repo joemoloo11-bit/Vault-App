@@ -198,24 +198,37 @@ export default function WeeklyAllocation() {
     periodWeeks: number
     arriving: number
     attributedItems: PayItemLine[]
-    sharedItems: PayItemLine[]
+    sharedRoutedItems: PayItemLine[]      // joint items that transfer to a Bank 2 destination
+    sharedAccumulatingItems: PayItemLine[] // joint items that stay in their envelope
     goalItems: PayGoalLine[]
     attributedWeekly: number
+    sharedRoutedWeekly: number
+    sharedAccumulatingWeekly: number
     sharedWeekly: number
     goalsWeekly: number
     attributedPay: number    // attributed × payPeriodWeeks
-    sharedShare: number       // shared × payPeriodWeeks / N
-    goalsShare: number        // goals × payPeriodWeeks / N
+    sharedRoutedShare: number  // routed × 1
+    sharedAccumulatingShare: number // accumulating × 1
+    sharedShare: number       // routed + accumulating
+    goalsShare: number       // goals × 1
     totalOutflow: number
     remaining: number
+  }
+
+  function isRoutedExpense(e: Expense): boolean {
+    const fromId = e.save_account_id ?? e.account_id
+    const toId = e.debit_account_id
+    return !!(fromId && toId && fromId !== toId)
   }
 
   const payBreakdowns: PayBreakdown[] = payingThisWeek.map(payer => {
     const periodWeeks = payPeriodWeeks(payer.frequency)
     const attributedItems: PayItemLine[] = []
-    const sharedItems: PayItemLine[] = []
+    const sharedRoutedItems: PayItemLine[] = []
+    const sharedAccumulatingItems: PayItemLine[] = []
     let attributedWeekly = 0
-    let sharedWeekly = 0
+    let sharedRoutedWeekly = 0
+    let sharedAccumulatingWeekly = 0
     for (const e of expenses) {
       const w = cashflow.effective[e.id] ?? 0
       if (w === 0) continue
@@ -224,8 +237,14 @@ export default function WeeklyAllocation() {
         attributedWeekly += w
       } else if (e.funded_by_income_id == null) {
         // One week of this shared expense is on this pay event
-        sharedItems.push({ expense: e, weekly: w, contribution: w * 1 })
-        sharedWeekly += w
+        const line: PayItemLine = { expense: e, weekly: w, contribution: w * 1 }
+        if (isRoutedExpense(e)) {
+          sharedRoutedItems.push(line)
+          sharedRoutedWeekly += w
+        } else {
+          sharedAccumulatingItems.push(line)
+          sharedAccumulatingWeekly += w
+        }
       }
     }
     const goalItems: PayGoalLine[] = goals
@@ -234,18 +253,22 @@ export default function WeeklyAllocation() {
     const goalsWeekly = cashflow.goalContributions
     const arriving = getEffectivePay(payer)
     const attributedPay = attributedWeekly * periodWeeks
-    // Each pay event covers ONE WEEK of shared expenses (alternating-pay model).
-    // Other weeks of shared are covered by the other person's next pay.
-    const sharedShare = sharedWeekly * 1
+    const sharedRoutedShare = sharedRoutedWeekly * 1
+    const sharedAccumulatingShare = sharedAccumulatingWeekly * 1
+    const sharedWeekly = sharedRoutedWeekly + sharedAccumulatingWeekly
+    const sharedShare = sharedRoutedShare + sharedAccumulatingShare
     const goalsShare = goalsWeekly * 1
     const totalOutflow = attributedPay + sharedShare + goalsShare
     // Sort items by contribution descending so the biggest line items appear first
     attributedItems.sort((a, b) => b.contribution - a.contribution)
-    sharedItems.sort((a, b) => b.contribution - a.contribution)
+    sharedRoutedItems.sort((a, b) => b.contribution - a.contribution)
+    sharedAccumulatingItems.sort((a, b) => b.contribution - a.contribution)
     return {
-      payer, periodWeeks, arriving, attributedItems, sharedItems, goalItems,
-      attributedWeekly, sharedWeekly, goalsWeekly,
-      attributedPay, sharedShare, goalsShare, totalOutflow,
+      payer, periodWeeks, arriving,
+      attributedItems, sharedRoutedItems, sharedAccumulatingItems, goalItems,
+      attributedWeekly, sharedRoutedWeekly, sharedAccumulatingWeekly, sharedWeekly, goalsWeekly,
+      attributedPay, sharedRoutedShare, sharedAccumulatingShare, sharedShare,
+      goalsShare, totalOutflow,
       remaining: arriving - totalOutflow,
     }
   })
@@ -406,8 +429,20 @@ export default function WeeklyAllocation() {
                     )}
                     {b.sharedShare > 0 && (
                       <>
-                        <span className="text-text-muted pl-3">− This week's joint expenses ({b.sharedItems.length} item{b.sharedItems.length === 1 ? '' : 's'} × 1wk)</span>
+                        <span className="text-text-muted pl-3">− This week's joint expenses ({b.sharedRoutedItems.length + b.sharedAccumulatingItems.length} items × 1wk)</span>
                         <span className="text-text-secondary text-right">−{formatCurrency(b.sharedShare)}</span>
+                        {b.sharedRoutedShare > 0 && (
+                          <>
+                            <span className="text-text-muted pl-6 text-[10px]">↳ Via transfers ({b.sharedRoutedItems.length} routed bill{b.sharedRoutedItems.length === 1 ? '' : 's'})</span>
+                            <span className="text-text-muted text-right text-[10px]">{formatCurrency(b.sharedRoutedShare)}</span>
+                          </>
+                        )}
+                        {b.sharedAccumulatingShare > 0 && (
+                          <>
+                            <span className="text-text-muted pl-6 text-[10px]">↳ Via accumulating envelopes ({b.sharedAccumulatingItems.length} bill{b.sharedAccumulatingItems.length === 1 ? '' : 's'})</span>
+                            <span className="text-text-muted text-right text-[10px]">{formatCurrency(b.sharedAccumulatingShare)}</span>
+                          </>
+                        )}
                       </>
                     )}
                     {b.goalsShare > 0 && (
@@ -645,22 +680,22 @@ export default function WeeklyAllocation() {
                   </section>
                 )}
 
-                {/* Shared items */}
-                {b.sharedItems.length > 0 && (
+                {/* Joint expenses — via transfers (routed envelope → Bank 2) */}
+                {b.sharedRoutedItems.length > 0 && (
                   <section>
                     <div className="flex items-baseline justify-between mb-2">
                       <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                        This week's joint expenses
+                        Joint expenses — via transfers
                       </h3>
                       <span className="text-sm font-semibold text-text-primary tabular-nums">
-                        {formatCurrency(b.sharedShare)}
+                        {formatCurrency(b.sharedRoutedShare)}
                       </span>
                     </div>
                     <p className="text-[11px] text-text-muted mb-2">
-                      Each item: weekly amount × 1 week. {b.payer.person_name}'s pay covers this week; the alternating pay covers the other weeks.
+                      Bills you manually move from a Bank 1 envelope to a Bank 2 debit account. These match what's shown under "Transfers to make".
                     </p>
                     <div className="space-y-1">
-                      {b.sharedItems.map(line => (
+                      {b.sharedRoutedItems.map(line => (
                         <div key={line.expense.id} className="flex items-center justify-between bg-surface-2/40 border border-border rounded-lg px-3 py-2 text-xs">
                           <div className="flex-1 min-w-0">
                             <p className="text-text-primary truncate">{line.expense.name}</p>
@@ -669,6 +704,45 @@ export default function WeeklyAllocation() {
                                 ? `${line.expense.percentage_value}% of pay`
                                 : `${formatCurrency(line.expense.amount)} ${line.expense.frequency.replace('_', ' ')}`}
                               {' · '}{formatCurrency(line.weekly)}/wk
+                              {line.expense.save_account_name && line.expense.debit_account_name && (
+                                <> · {line.expense.save_account_name} → {line.expense.debit_account_name}</>
+                              )}
+                            </p>
+                          </div>
+                          <span className="text-text-primary tabular-nums font-semibold">{formatCurrency(line.contribution)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Joint expenses — accumulating envelopes (paid direct) */}
+                {b.sharedAccumulatingItems.length > 0 && (
+                  <section>
+                    <div className="flex items-baseline justify-between mb-2">
+                      <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                        Joint expenses — accumulating envelopes
+                      </h3>
+                      <span className="text-sm font-semibold text-text-primary tabular-nums">
+                        {formatCurrency(b.sharedAccumulatingShare)}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-text-muted mb-2">
+                      Funded by auto-split but stay in their envelope — no manual transfer needed (paid direct or building up over time).
+                    </p>
+                    <div className="space-y-1">
+                      {b.sharedAccumulatingItems.map(line => (
+                        <div key={line.expense.id} className="flex items-center justify-between bg-surface-2/40 border border-border rounded-lg px-3 py-2 text-xs">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-text-primary truncate">{line.expense.name}</p>
+                            <p className="text-[10px] text-text-muted">
+                              {line.expense.is_percentage
+                                ? `${line.expense.percentage_value}% of pay`
+                                : `${formatCurrency(line.expense.amount)} ${line.expense.frequency.replace('_', ' ')}`}
+                              {' · '}{formatCurrency(line.weekly)}/wk
+                              {(line.expense.save_account_name ?? line.expense.account_name) && (
+                                <> · stays in {line.expense.save_account_name ?? line.expense.account_name}</>
+                              )}
                             </p>
                           </div>
                           <span className="text-text-primary tabular-nums font-semibold">{formatCurrency(line.contribution)}</span>

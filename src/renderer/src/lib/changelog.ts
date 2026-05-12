@@ -8,6 +8,17 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.11.7',
+    date: '2026-05-09',
+    title: 'Joint Expenses Split — Transfers vs Accumulating',
+    highlights: [
+      'Weekly Move pay breakdown now splits joint expenses into TWO sub-lines: via transfers (what you manually move to Bank 2) + via accumulating envelopes (paid direct, no transfer needed).',
+      'Previously the breakdown only showed one "Joint expenses" total, which made the math feel inconsistent with the "Transfers to make" section — those should NOT match because accumulators are funded but don\'t transfer.',
+      'Modal now has two separate joint sections, each with their own item list. You can see exactly which bill is routed vs which is paid direct from its envelope.',
+      'Numbers reconcile: Transfers Planned + Accumulating share = Joint expenses total.',
+    ],
+  },
+  {
     version: '1.11.6',
     date: '2026-05-09',
     title: 'Pay Calendar Math Aligned',
