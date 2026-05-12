@@ -8,6 +8,17 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.11.8',
+    date: '2026-05-11',
+    title: 'Excel/PDF Export Math Fix',
+    highlights: [
+      'Export (Excel + PDF) was using raw bill amount and naive frequency conversion. Per-pay items showed $0, allocation amounts were ignored, percentage allocations were ignored.',
+      'Both exports now use the same computeWeeklyCashflow helper as the rest of the app — totals match Dashboard, Budget Setup, and Weekly Move exactly.',
+      'Excel Expenses sheet now also exports: Allocation, Weekly Buffer, Save Account, Debit Account, Funded by, and percentage details when applicable. Useful for spreadsheet auditing.',
+      'Accounts sheet now shows account Type + a "Weekly Bills (debit from here)" column so envelope vs offset is visible.',
+    ],
+  },
+  {
     version: '1.11.7',
     date: '2026-05-09',
     title: 'Joint Expenses Split — Transfers vs Accumulating',

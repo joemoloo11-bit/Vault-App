@@ -3,7 +3,7 @@ import { Download, FileSpreadsheet, FileText, Check } from 'lucide-react'
 import { Card, CardContent } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
 import { formatCurrency, getCurrentWeekStart, getWeekLabel } from '@renderer/lib/utils'
-import { toWeeklyAmount } from '@renderer/types'
+import { toWeeklyAmount, computeWeeklyCashflow } from '@renderer/types'
 import type { Account, IncomeSource, Expense, Goal, BalanceLog } from '@renderer/types'
 
 export default function Export() {
@@ -24,8 +24,12 @@ export default function Export() {
         window.api.balances.getLatest(),
       ])
 
-      const weeklyIncome = (income as IncomeSource[]).reduce((sum, s) => sum + toWeeklyAmount(s.amount, s.frequency), 0)
-      const weeklyExpenses = (expenses as Expense[]).reduce((sum, e) => sum + toWeeklyAmount(e.amount, e.frequency), 0)
+      // Use single source of truth for cashflow math — handles per_pay,
+      // allocation_amount, weekly_extra, percentage allocations, goals.
+      const cf = computeWeeklyCashflow(expenses as Expense[], income as IncomeSource[], goals as Goal[])
+      const weeklyIncome = cf.weeklyIncome
+      const weeklyExpenses = cf.totalAllocations
+      const freeCashflow = cf.freeCashflow
 
       const wb = XLSX.utils.book_new()
 
@@ -39,33 +43,53 @@ export default function Export() {
         ['', ''],
         ['Weekly Income Total', weeklyIncome],
         ['', ''],
-        ['EXPENSES', ''],
-        ...(expenses as Expense[]).map(e => [e.name, toWeeklyAmount(e.amount, e.frequency)]),
+        ['EXPENSES (weekly equivalents — uses allocation amounts + per-pay attribution)', ''],
+        ...(expenses as Expense[]).map(e => [e.name, cf.effective[e.id] ?? 0]),
         ['', ''],
-        ['Weekly Expenses Total', weeklyExpenses],
-        ['Free Cashflow', weeklyIncome - weeklyExpenses],
+        ['Weekly Allocations Total', weeklyExpenses],
+        ['Goal Contributions Total', cf.goalContributions],
+        ['Free Cashflow', freeCashflow],
       ]
       const wsSummary = XLSX.utils.aoa_to_sheet(summary)
       XLSX.utils.book_append_sheet(wb, wsSummary, 'Budget Summary')
 
-      // Accounts sheet
+      // Accounts sheet — bills assigned per account = bills that DEBIT from this account
+      // (with fallback to save_account_id, then legacy account_id)
       const accountRows = [
-        ['Account', 'Weekly Target', 'Buffer %', 'Latest Balance', 'Status'],
+        ['Account', 'Type', 'Weekly Target', 'Buffer %', 'Latest Balance', 'Weekly Bills (debit from here)', 'Status'],
         ...(accounts as Account[]).map(acc => {
           const log = (latestLogs as BalanceLog[]).find(l => l.account_id === acc.id)
           const weeklyBills = (expenses as Expense[])
-            .filter(e => e.account_id === acc.id)
-            .reduce((sum, e) => sum + toWeeklyAmount(e.amount, e.frequency), 0)
-          const status = !log ? 'No data' : weeklyBills === 0 ? 'Covered' : (log.balance / weeklyBills) >= 2 ? 'Covered' : (log.balance / weeklyBills) >= 1 ? 'At Risk' : 'Shortfall'
-          return [acc.name, acc.weekly_target, acc.buffer_percent, log?.balance ?? '', status]
+            .filter(e => (e.debit_account_id ?? e.save_account_id ?? e.account_id) === acc.id)
+            .reduce((sum, e) => sum + (cf.effective[e.id] ?? 0), 0)
+          const status = acc.type === 'envelope' ? 'Envelope (transit)'
+            : !log ? 'No data'
+            : weeklyBills === 0 ? 'Covered'
+            : (log.balance / (weeklyBills * 4.33)) >= 1 ? 'Covered'
+            : (log.balance / (weeklyBills * 4.33)) >= 0.5 ? 'At Risk'
+            : 'Shortfall'
+          return [acc.name, acc.type ?? 'envelope', acc.weekly_target, acc.buffer_percent, log?.balance ?? '', weeklyBills, status]
         }),
       ]
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(accountRows), 'Accounts')
 
-      // Expenses sheet
+      // Expenses sheet — weekly equiv now uses cf.effective (handles per_pay,
+      // allocation_amount, weekly_extra, percentage allocations)
       const expenseRows = [
-        ['Expense', 'Amount', 'Frequency', 'Due Day', 'Account', 'Category', 'Weekly Equiv'],
-        ...(expenses as Expense[]).map(e => [e.name, e.amount, e.frequency, e.due_day ?? '', e.account_name ?? '', e.category, toWeeklyAmount(e.amount, e.frequency)]),
+        ['Expense', 'Amount', 'Frequency', 'Allocation', 'Weekly Buffer', 'Due Day', 'Save Account', 'Debit Account', 'Funded by', 'Category', 'Weekly Equiv ($)'],
+        ...(expenses as Expense[]).map(e => [
+          e.name,
+          e.is_percentage ? `${e.percentage_value}% ${e.percentage_basis}` : e.amount,
+          e.frequency,
+          e.allocation_amount ?? '',
+          e.weekly_extra ?? '',
+          e.due_day ?? '',
+          e.save_account_name ?? e.account_name ?? '',
+          e.debit_account_name ?? '',
+          e.funded_by_person_name ?? 'Shared',
+          e.category,
+          cf.effective[e.id] ?? 0,
+        ]),
       ]
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(expenseRows), 'Expenses')
 
@@ -101,9 +125,11 @@ export default function Export() {
         window.api.balances.getLatest(),
       ])
 
-      const weeklyIncome = (income as IncomeSource[]).reduce((sum, s) => sum + toWeeklyAmount(s.amount, s.frequency), 0)
-      const weeklyExpenses = (expenses as Expense[]).reduce((sum, e) => sum + toWeeklyAmount(e.amount, e.frequency), 0)
-      const freeCashflow = weeklyIncome - weeklyExpenses
+      // Same single source of truth as the Excel export and the in-app pages.
+      const cf = computeWeeklyCashflow(expenses as Expense[], income as IncomeSource[], goals as Goal[])
+      const weeklyIncome = cf.weeklyIncome
+      const weeklyExpenses = cf.totalAllocations
+      const freeCashflow = cf.freeCashflow
 
       const doc = new jsPDF()
       const primaryColor: [number, number, number] = [20, 184, 166] // teal

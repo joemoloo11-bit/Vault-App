@@ -158,7 +158,7 @@ export default function DebugPanel({ visible, onClose }: DebugPanelProps) {
           <div className="flex items-center gap-2">
             <Bug size={14} className="text-accent" />
             <span className="text-xs font-semibold text-text-primary tracking-wider">VAULT DEBUG</span>
-            <span className="text-[10px] text-text-muted">v1.11.7</span>
+            <span className="text-[10px] text-text-muted">v1.11.8</span>
             {errorCount > 0 && (
               <span className="bg-danger text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
                 {errorCount} ERR
