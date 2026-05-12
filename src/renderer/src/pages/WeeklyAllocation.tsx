@@ -4,6 +4,7 @@ import { Card, CardContent } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { useToast } from '@renderer/components/ui/toast'
+import { Dialog, DialogContent, DialogClose } from '@renderer/components/ui/dialog'
 import { formatCurrency, getCurrentWeekStart, getWeekLabel } from '@renderer/lib/utils'
 import { isPayWeek, computeWeeklyCashflow } from '@renderer/types'
 import type { Account, IncomeSource, Expense, Transfer, BalanceLog, PayOverride, Goal } from '@renderer/types'
@@ -20,6 +21,7 @@ export default function WeeklyAllocation() {
   const [payOverrides, setPayOverrides] = useState<PayOverride[]>([])
   const [editingPayId, setEditingPayId] = useState<number | null>(null)
   const [payDraft, setPayDraft] = useState('')
+  const [detailPayerId, setDetailPayerId] = useState<number | null>(null)
   const [drafts, setDrafts] = useState<Record<string, string>>({}) // key: `${from}-${to}` → entered amount string
   const { toast } = useToast()
 
@@ -183,9 +185,23 @@ export default function WeeklyAllocation() {
   }
   const N_PAYERS = Math.max(1, income.length)
 
+  interface PayItemLine {
+    expense: Expense
+    weekly: number
+    contribution: number   // dollars actually charged to this pay event
+  }
+  interface PayGoalLine {
+    goal: Goal
+    weekly: number
+    contribution: number
+  }
   interface PayBreakdown {
     payer: IncomeSource
+    periodWeeks: number
     arriving: number
+    attributedItems: PayItemLine[]
+    sharedItems: PayItemLine[]
+    goalItems: PayGoalLine[]
     attributedWeekly: number
     sharedWeekly: number
     goalsWeekly: number
@@ -198,21 +214,36 @@ export default function WeeklyAllocation() {
 
   const payBreakdowns: PayBreakdown[] = payingThisWeek.map(payer => {
     const periodWeeks = payPeriodWeeks(payer.frequency)
+    const attributedItems: PayItemLine[] = []
+    const sharedItems: PayItemLine[] = []
     let attributedWeekly = 0
     let sharedWeekly = 0
     for (const e of expenses) {
       const w = cashflow.effective[e.id] ?? 0
-      if (e.funded_by_income_id === payer.id) attributedWeekly += w
-      else if (e.funded_by_income_id == null) sharedWeekly += w
+      if (w === 0) continue
+      if (e.funded_by_income_id === payer.id) {
+        attributedItems.push({ expense: e, weekly: w, contribution: w * periodWeeks })
+        attributedWeekly += w
+      } else if (e.funded_by_income_id == null) {
+        sharedItems.push({ expense: e, weekly: w, contribution: (w * periodWeeks) / N_PAYERS })
+        sharedWeekly += w
+      }
     }
+    const goalItems: PayGoalLine[] = goals
+      .filter(g => g.status === 'active' && g.weekly_contribution > 0)
+      .map(g => ({ goal: g, weekly: g.weekly_contribution, contribution: (g.weekly_contribution * periodWeeks) / N_PAYERS }))
     const goalsWeekly = cashflow.goalContributions
     const arriving = getEffectivePay(payer)
     const attributedPay = attributedWeekly * periodWeeks
     const sharedShare = (sharedWeekly * periodWeeks) / N_PAYERS
     const goalsShare = (goalsWeekly * periodWeeks) / N_PAYERS
     const totalOutflow = attributedPay + sharedShare + goalsShare
+    // Sort items by contribution descending so the biggest line items appear first
+    attributedItems.sort((a, b) => b.contribution - a.contribution)
+    sharedItems.sort((a, b) => b.contribution - a.contribution)
     return {
-      payer, arriving, attributedWeekly, sharedWeekly, goalsWeekly,
+      payer, periodWeeks, arriving, attributedItems, sharedItems, goalItems,
+      attributedWeekly, sharedWeekly, goalsWeekly,
       attributedPay, sharedShare, goalsShare, totalOutflow,
       remaining: arriving - totalOutflow,
     }
@@ -348,29 +379,39 @@ export default function WeeklyAllocation() {
           {payBreakdowns.length > 0 && (
             <div className="pl-7 pt-3 border-t border-accent/20 space-y-3">
               {payBreakdowns.map(b => (
-                <div key={b.payer.id} className="text-xs">
-                  <p className="text-[10px] uppercase tracking-wider text-text-muted mb-1.5">
-                    {b.payer.person_name}'s pay — math for this pay event
-                  </p>
+                <button
+                  type="button"
+                  key={b.payer.id}
+                  onClick={() => setDetailPayerId(b.payer.id)}
+                  className="w-full text-left text-xs hover:bg-accent/5 rounded-lg p-2 -m-2 transition-colors cursor-pointer group"
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-text-muted">
+                      {b.payer.person_name}'s pay — math for this pay event
+                    </p>
+                    <p className="text-[10px] text-accent opacity-0 group-hover:opacity-100 transition-opacity">
+                      Click for item-by-item breakdown →
+                    </p>
+                  </div>
                   <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 font-mono tabular-nums">
                     <span className="text-text-secondary">Arriving</span>
                     <span className="text-text-primary text-right">{formatCurrency(b.arriving)}</span>
 
                     {b.attributedPay > 0 && (
                       <>
-                        <span className="text-text-muted pl-3">− {b.payer.person_name}-only expenses ({formatCurrency(b.attributedWeekly)}/wk × {payPeriodWeeks(b.payer.frequency)}wk)</span>
+                        <span className="text-text-muted pl-3">− {b.payer.person_name}-only expenses ({b.attributedItems.length} item{b.attributedItems.length === 1 ? '' : 's'} × {payPeriodWeeks(b.payer.frequency)}wk)</span>
                         <span className="text-text-secondary text-right">−{formatCurrency(b.attributedPay)}</span>
                       </>
                     )}
                     {b.sharedShare > 0 && (
                       <>
-                        <span className="text-text-muted pl-3">− Share of joint expenses ({formatCurrency(b.sharedWeekly)}/wk × {payPeriodWeeks(b.payer.frequency)}wk ÷ {N_PAYERS})</span>
+                        <span className="text-text-muted pl-3">− Share of joint expenses ({b.sharedItems.length} item{b.sharedItems.length === 1 ? '' : 's'} × {payPeriodWeeks(b.payer.frequency)}wk ÷ {N_PAYERS})</span>
                         <span className="text-text-secondary text-right">−{formatCurrency(b.sharedShare)}</span>
                       </>
                     )}
                     {b.goalsShare > 0 && (
                       <>
-                        <span className="text-text-muted pl-3">− Share of goal contributions</span>
+                        <span className="text-text-muted pl-3">− Share of goal contributions ({b.goalItems.length} goal{b.goalItems.length === 1 ? '' : 's'})</span>
                         <span className="text-text-secondary text-right">−{formatCurrency(b.goalsShare)}</span>
                       </>
                     )}
@@ -380,7 +421,7 @@ export default function WeeklyAllocation() {
                       {formatCurrency(b.remaining)}
                     </span>
                   </div>
-                </div>
+                </button>
               ))}
 
               {payBreakdowns.length > 1 && (
@@ -557,6 +598,134 @@ export default function WeeklyAllocation() {
           </div>
         </div>
       )}
+
+      {/* Per-pay item-by-item breakdown modal */}
+      {(() => {
+        const b = payBreakdowns.find(x => x.payer.id === detailPayerId)
+        if (!b) return null
+        return (
+          <Dialog open={detailPayerId !== null} onOpenChange={(o) => !o && setDetailPayerId(null)}>
+            <DialogContent
+              title={`${b.payer.person_name}'s pay — item-by-item breakdown`}
+              description={`Every expense contributing to the ${formatCurrency(b.totalOutflow)} deduction from this ${formatCurrency(b.arriving)} pay event.`}
+              className="max-w-3xl"
+            >
+              <div className="space-y-5">
+                {/* Attributed items */}
+                {b.attributedItems.length > 0 && (
+                  <section>
+                    <div className="flex items-baseline justify-between mb-2">
+                      <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                        {b.payer.person_name}-only expenses
+                      </h3>
+                      <span className="text-sm font-semibold text-text-primary tabular-nums">
+                        {formatCurrency(b.attributedPay)}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-text-muted mb-2">
+                      Each item: weekly equivalent × {b.periodWeeks} weeks (full responsibility — only {b.payer.person_name}'s pay covers these).
+                    </p>
+                    <div className="space-y-1">
+                      {b.attributedItems.map(line => (
+                        <div key={line.expense.id} className="flex items-center justify-between bg-surface-2/40 border border-border rounded-lg px-3 py-2 text-xs">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-text-primary truncate">{line.expense.name}</p>
+                            <p className="text-[10px] text-text-muted">
+                              {line.expense.is_percentage
+                                ? `${line.expense.percentage_value}% of pay`
+                                : `${formatCurrency(line.expense.amount)} ${line.expense.frequency}`}
+                              {' · '}{formatCurrency(line.weekly)}/wk
+                            </p>
+                          </div>
+                          <span className="text-text-primary tabular-nums font-semibold">{formatCurrency(line.contribution)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Shared items */}
+                {b.sharedItems.length > 0 && (
+                  <section>
+                    <div className="flex items-baseline justify-between mb-2">
+                      <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                        Joint expenses ({b.payer.person_name}'s share)
+                      </h3>
+                      <span className="text-sm font-semibold text-text-primary tabular-nums">
+                        {formatCurrency(b.sharedShare)}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-text-muted mb-2">
+                      Each item: weekly × {b.periodWeeks} weeks ÷ {N_PAYERS} payers = {b.payer.person_name}'s share.
+                    </p>
+                    <div className="space-y-1">
+                      {b.sharedItems.map(line => (
+                        <div key={line.expense.id} className="flex items-center justify-between bg-surface-2/40 border border-border rounded-lg px-3 py-2 text-xs">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-text-primary truncate">{line.expense.name}</p>
+                            <p className="text-[10px] text-text-muted">
+                              {line.expense.is_percentage
+                                ? `${line.expense.percentage_value}% of pay`
+                                : `${formatCurrency(line.expense.amount)} ${line.expense.frequency}`}
+                              {' · '}{formatCurrency(line.weekly)}/wk full · {formatCurrency(line.weekly / N_PAYERS)}/wk share
+                            </p>
+                          </div>
+                          <span className="text-text-primary tabular-nums font-semibold">{formatCurrency(line.contribution)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Goals */}
+                {b.goalItems.length > 0 && (
+                  <section>
+                    <div className="flex items-baseline justify-between mb-2">
+                      <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                        Goal contributions ({b.payer.person_name}'s share)
+                      </h3>
+                      <span className="text-sm font-semibold text-text-primary tabular-nums">
+                        {formatCurrency(b.goalsShare)}
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      {b.goalItems.map(line => (
+                        <div key={line.goal.id} className="flex items-center justify-between bg-surface-2/40 border border-border rounded-lg px-3 py-2 text-xs">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-text-primary truncate">{line.goal.name}</p>
+                            <p className="text-[10px] text-text-muted">{formatCurrency(line.weekly)}/wk full · {formatCurrency(line.weekly / N_PAYERS)}/wk share</p>
+                          </div>
+                          <span className="text-text-primary tabular-nums font-semibold">{formatCurrency(line.contribution)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Totals */}
+                <div className="pt-3 border-t border-border space-y-1 text-sm font-mono tabular-nums">
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary">Arriving</span>
+                    <span className="text-text-primary">{formatCurrency(b.arriving)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-text-secondary">Total deductions from this pay</span>
+                    <span className="text-text-primary">−{formatCurrency(b.totalOutflow)}</span>
+                  </div>
+                  <div className="flex justify-between pt-1 border-t border-border font-semibold">
+                    <span className="text-text-primary">Remaining</span>
+                    <span className={b.remaining >= 0 ? 'text-success' : 'text-danger'}>{formatCurrency(b.remaining)}</span>
+                  </div>
+                </div>
+
+                <DialogClose asChild>
+                  <Button variant="outline" className="w-full">Close</Button>
+                </DialogClose>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )
+      })()}
     </div>
   )
 }

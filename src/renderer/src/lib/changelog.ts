@@ -8,6 +8,17 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.11.4',
+    date: '2026-05-09',
+    title: 'Pay Breakdown Click-Through',
+    highlights: [
+      'Click any per-pay breakdown row on Weekly Move → opens a full item-by-item modal showing every single expense contributing to that pay event\'s deduction.',
+      'Three sections in the modal: person-only expenses (full responsibility), joint expenses (with their share calculation), and goal contributions.',
+      'Each line shows the original amount/frequency, weekly equivalent, and the exact dollars charged to this pay event. Sorted by largest contribution first.',
+      'No more guessing where the "Transfers Planned" or "Remaining" numbers come from — every dollar is traceable to a named bill.',
+    ],
+  },
+  {
     version: '1.11.3',
     date: '2026-05-09',
     title: 'Save Changes Fix + Weekly Move Math Reworked',
