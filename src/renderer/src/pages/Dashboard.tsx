@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/u
 import { Badge } from '@renderer/components/ui/badge'
 import { Progress } from '@renderer/components/ui/progress'
 import { formatCurrency, getCurrentWeekStart, getWeekLabel } from '@renderer/lib/utils'
-import { toWeeklyAmount, getNextPayday, daysUntilPayday, getUpcomingPaydays } from '@renderer/types'
+import { toWeeklyAmount, getNextPayday, daysUntilPayday, getUpcomingPaydays, computeWeeklyCashflow } from '@renderer/types'
 import type { Account, IncomeSource, Expense, BalanceLog, Goal, WeeklyAllocation } from '@renderer/types'
 import { format, addDays } from 'date-fns'
 import { Link } from 'react-router-dom'
@@ -76,16 +76,13 @@ export default function Dashboard() {
 
   const { accounts, income, expenses, latestLogs, goals, weeklyAllocations } = data
 
-  const weeklyIncome = income.reduce((sum, s) => sum + toWeeklyAmount(s.amount, s.frequency), 0)
+  const cf = computeWeeklyCashflow(expenses, income, goals as Goal[])
+  const weeklyIncome = cf.weeklyIncome
   // Raw bill cost (used for the Weekly Expenses metric card — "what bills actually cost")
   const weeklyExpenses = expenses.reduce((sum, e) => sum + toWeeklyAmount(e.amount, e.frequency), 0)
-  // Allocations including buffer (used for free cashflow — what's actually moved away from spending money)
-  const weeklyAllocations = expenses.reduce((sum, e) =>
-    sum + toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0), 0)
-  const activeGoalContributions = (goals as Goal[])
-    .filter(g => g.status === 'active')
-    .reduce((sum, g) => sum + g.weekly_contribution, 0)
-  const freeCashflow = weeklyIncome - weeklyAllocations - activeGoalContributions
+  const weeklyAllocations = cf.totalAllocations
+  const activeGoalContributions = cf.goalContributions
+  const freeCashflow = cf.freeCashflow
   const cushionScore = getCushionScore(weeklyIncome, weeklyExpenses, latestLogs, accounts, expenses)
 
   // Bills due this week (day of month 1-7 range around now)
@@ -156,15 +153,31 @@ export default function Dashboard() {
 
       {/* Key numbers */}
       <div className="grid grid-cols-3 gap-4">
-        <MetricCard label="Weekly Income" value={weeklyIncome} color="text-success" icon={DollarSign} accent="border-success" />
-        <MetricCard label="Weekly Expenses" value={weeklyExpenses} color="text-warning" icon={TrendingUp} accent="border-warning" />
+        <MetricCard
+          label="Weekly Income"
+          value={weeklyIncome}
+          color="text-success"
+          icon={DollarSign}
+          accent="border-success"
+          sub={income.length > 1 ? `Combined from ${income.length} pays (weekly avg)` : 'Weekly average'}
+        />
+        <MetricCard
+          label="Weekly Allocations"
+          value={weeklyAllocations}
+          color="text-warning"
+          icon={TrendingUp}
+          accent="border-warning"
+          sub={cf.percentageAllocations > 0
+            ? `${formatCurrency(cf.fixedAllocations)} fixed + ${formatCurrency(cf.percentageAllocations)} %-based`
+            : `Bills + buffers (raw cost ${formatCurrency(weeklyExpenses)})`}
+        />
         <MetricCard
           label="Free Cashflow"
           value={freeCashflow}
           color={freeCashflow >= 0 ? 'text-success' : 'text-danger'}
           icon={TrendingUp}
           accent={freeCashflow >= 0 ? 'border-success' : 'border-danger'}
-          sub={freeCashflow >= 0 ? 'after all expenses & goals' : 'over budget'}
+          sub={`${formatCurrency(weeklyIncome)} − ${formatCurrency(weeklyAllocations)}${activeGoalContributions > 0 ? ` − ${formatCurrency(activeGoalContributions)} goals` : ''}`}
           negative={freeCashflow < 0}
         />
       </div>
@@ -311,9 +324,11 @@ export default function Dashboard() {
           })
         })
 
-        // Compute lean weeks: pay arriving < weekly expenses
-        const weeklyExpensesAmt = weeklyExpenses
+        // Per-week remaining = pay arriving that week − weekly allocations − weekly goals
+        // (Allocations and goals are constant week-over-week, but pay varies)
+        const constantWeeklyOutflow = weeklyAllocations + activeGoalContributions
         const weekTotals = weeks.map(w => w.events.reduce((s, e) => s + e.amount, 0))
+        const weekRemainings = weekTotals.map(t => t - constantWeeklyOutflow)
 
         return (
           <Card>
@@ -324,31 +339,37 @@ export default function Dashboard() {
             <CardContent>
               <div className="grid grid-cols-8 gap-2">
                 {weeks.map((w, i) => {
-                  const isLean = weekTotals[i] > 0 && weekTotals[i] < weeklyExpensesAmt
+                  const remaining = weekRemainings[i]
                   const isEmpty = w.events.length === 0
+                  const isShortfall = !isEmpty && remaining < 0
                   const baseClasses = isEmpty
                     ? 'border-border bg-surface-2/30 text-text-muted'
-                    : isLean
-                      ? 'border-warning/40 bg-warning/5'
+                    : isShortfall
+                      ? 'border-danger/40 bg-danger/5'
                       : 'border-accent/30 bg-accent/5'
                   return (
-                    <div key={i} className={`rounded-lg border p-2 min-h-[80px] flex flex-col ${baseClasses}`}>
+                    <div key={i} className={`rounded-lg border p-2 min-h-[100px] flex flex-col ${baseClasses}`}>
                       <p className="text-[10px] uppercase tracking-wider text-text-muted">
                         {format(w.start, 'd MMM')}
                       </p>
                       {isEmpty ? (
                         <p className="text-[10px] text-text-muted mt-1">No pay</p>
                       ) : (
-                        <div className="mt-1 space-y-0.5">
+                        <div className="mt-1 space-y-0.5 flex-1">
                           {w.events.map((e, j) => (
                             <div key={j}>
                               <p className="text-[11px] text-text-primary truncate">{e.person}</p>
                               <p className="text-[10px] text-text-muted tabular-nums">{formatCurrency(e.amount)}</p>
                             </div>
                           ))}
-                          {isLean && (
-                            <p className="text-[9px] text-warning mt-1 uppercase tracking-wider">Lean</p>
-                          )}
+                        </div>
+                      )}
+                      {!isEmpty && (
+                        <div className="mt-1.5 pt-1.5 border-t border-border/50">
+                          <p className="text-[9px] uppercase tracking-wider text-text-muted">Remaining</p>
+                          <p className={`text-[11px] font-semibold tabular-nums ${remaining >= 0 ? 'text-success' : 'text-danger'}`}>
+                            {formatCurrency(remaining)}
+                          </p>
                         </div>
                       )}
                     </div>
@@ -356,7 +377,7 @@ export default function Dashboard() {
                 })}
               </div>
               <p className="text-[10px] text-text-muted mt-3">
-                Lean weeks have pay arriving but less than your average weekly expenses ({formatCurrency(weeklyExpensesAmt)}).
+                Remaining = pay arriving that week − {formatCurrency(constantWeeklyOutflow)}/wk allocations & goals. Red weeks are short.
               </p>
             </CardContent>
           </Card>

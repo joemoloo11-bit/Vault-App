@@ -7,7 +7,7 @@ import { Badge } from '@renderer/components/ui/badge'
 import { Dialog, DialogContent, DialogTrigger, DialogClose } from '@renderer/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@renderer/components/ui/select'
 import { formatCurrency } from '@renderer/lib/utils'
-import { toWeeklyAmount, ACCOUNT_COLORS, EXPENSE_CATEGORIES, ACCOUNT_TYPE_OPTIONS } from '@renderer/types'
+import { toWeeklyAmount, ACCOUNT_COLORS, EXPENSE_CATEGORIES, ACCOUNT_TYPE_OPTIONS, computeWeeklyCashflow } from '@renderer/types'
 import type { Account, IncomeSource, Expense, AccountType, Goal } from '@renderer/types'
 import { ConfirmDialog } from '@renderer/components/ui/confirm-dialog'
 import { useToast } from '@renderer/components/ui/toast'
@@ -49,11 +49,12 @@ export default function BudgetSetup() {
     setGoals(gls as Goal[])
   }
 
-  const weeklyIncome = income.reduce((sum, s) => sum + toWeeklyAmount(s.amount, s.frequency), 0)
+  const cf = computeWeeklyCashflow(expenses, income, goals)
+  const weeklyIncome = cf.weeklyIncome
   const weeklyExpenses = expenses.reduce((sum, e) => sum + toWeeklyAmount(e.amount, e.frequency), 0)
-  const weeklyAllocations = expenses.reduce((sum, e) => sum + toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0), 0)
-  const activeGoalContributions = goals.filter(g => g.status === 'active').reduce((sum, g) => sum + g.weekly_contribution, 0)
-  const freeCashflow = weeklyIncome - weeklyAllocations - activeGoalContributions
+  const weeklyAllocations = cf.totalAllocations
+  const activeGoalContributions = cf.goalContributions
+  const freeCashflow = cf.freeCashflow
 
   return (
     <div className="p-6 space-y-6 animate-fade-in">
@@ -64,13 +65,25 @@ export default function BudgetSetup() {
 
       {/* Summary strip */}
       <div className="grid grid-cols-3 gap-4">
-        <SummaryCard label="Weekly Income" value={weeklyIncome} color="success" />
-        <SummaryCard label="Weekly Expenses" value={weeklyExpenses} color="warning" />
+        <SummaryCard
+          label="Weekly Income"
+          value={weeklyIncome}
+          color="success"
+          hint={income.length > 1 ? `Combined from ${income.length} sources` : undefined}
+        />
+        <SummaryCard
+          label="Weekly Allocations"
+          value={weeklyAllocations}
+          color="warning"
+          hint={cf.percentageAllocations > 0
+            ? `${formatCurrency(cf.fixedAllocations)} fixed + ${formatCurrency(cf.percentageAllocations)} from %`
+            : `Bills + buffers (raw cost ${formatCurrency(weeklyExpenses)})`}
+        />
         <SummaryCard
           label="Free Cashflow"
           value={freeCashflow}
           color={freeCashflow >= 0 ? 'success' : 'danger'}
-          hint={activeGoalContributions > 0 ? `After ${formatCurrency(weeklyAllocations)}/wk allocations + ${formatCurrency(activeGoalContributions)}/wk goals` : `After ${formatCurrency(weeklyAllocations)}/wk allocations`}
+          hint={`${formatCurrency(weeklyIncome)} income − ${formatCurrency(weeklyAllocations)} allocations${activeGoalContributions > 0 ? ` − ${formatCurrency(activeGoalContributions)} goals` : ''}`}
         />
       </div>
 
@@ -103,7 +116,7 @@ export default function BudgetSetup() {
         <AccountsTab accounts={accounts} onRefresh={loadAll} />
       )}
       {tab === 'expenses' && (
-        <ExpensesTab expenses={expenses} accounts={accounts} income={income} onRefresh={loadAll} />
+        <ExpensesTab expenses={expenses} accounts={accounts} income={income} effective={cf.effective} onRefresh={loadAll} />
       )}
     </div>
   )
@@ -454,7 +467,7 @@ function AccountsTab({ accounts, onRefresh }: { accounts: Account[]; onRefresh: 
 
 // ─── Expenses Tab ─────────────────────────────────────────────────────────────
 
-function ExpensesTab({ expenses, accounts, income, onRefresh }: { expenses: Expense[]; accounts: Account[]; income: IncomeSource[]; onRefresh: () => void }) {
+function ExpensesTab({ expenses, accounts, income, effective, onRefresh }: { expenses: Expense[]; accounts: Account[]; income: IncomeSource[]; effective: Record<number, number>; onRefresh: () => void }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Expense | null>(null)
   const [confirmId, setConfirmId] = useState<number | null>(null)
@@ -464,7 +477,11 @@ function ExpensesTab({ expenses, accounts, income, onRefresh }: { expenses: Expe
   const { toast } = useToast()
   const [form, setForm] = useState({
     name: '', amount: '', allocation_amount: '', weekly_extra: '', frequency: 'monthly', due_day: '',
-    save_account_id: '', debit_account_id: '', funded_by_income_id: '', category: 'Bills & Utilities'
+    save_account_id: '', debit_account_id: '', funded_by_income_id: '', category: 'Bills & Utilities',
+    is_percentage: false,
+    percentage_basis: 'free_cashflow' as 'free_cashflow' | 'combined_income' | 'specific_pay',
+    percentage_value: '',
+    percentage_pay_id: '',
   })
 
   function toggleCategory(cat: string) {
@@ -479,7 +496,8 @@ function ExpensesTab({ expenses, accounts, income, onRefresh }: { expenses: Expe
     setEditing(null)
     setForm({
       name: '', amount: '', allocation_amount: '', weekly_extra: '', frequency: 'monthly', due_day: '',
-      save_account_id: '', debit_account_id: '', funded_by_income_id: '', category: 'Bills & Utilities'
+      save_account_id: '', debit_account_id: '', funded_by_income_id: '', category: 'Bills & Utilities',
+      is_percentage: false, percentage_basis: 'free_cashflow', percentage_value: '', percentage_pay_id: '',
     })
     setOpen(true)
   }
@@ -496,6 +514,10 @@ function ExpensesTab({ expenses, accounts, income, onRefresh }: { expenses: Expe
       debit_account_id: exp.debit_account_id ? String(exp.debit_account_id) : '',
       funded_by_income_id: exp.funded_by_income_id ? String(exp.funded_by_income_id) : '',
       category: exp.category,
+      is_percentage: !!exp.is_percentage,
+      percentage_basis: (exp.percentage_basis ?? 'free_cashflow') as any,
+      percentage_value: exp.percentage_value != null ? String(exp.percentage_value) : '',
+      percentage_pay_id: exp.percentage_pay_id ? String(exp.percentage_pay_id) : '',
     })
     setOpen(true)
   }
@@ -515,6 +537,12 @@ function ExpensesTab({ expenses, accounts, income, onRefresh }: { expenses: Expe
       debit_account_id: form.debit_account_id ? parseInt(form.debit_account_id) : undefined,
       funded_by_income_id: form.funded_by_income_id ? parseInt(form.funded_by_income_id) : undefined,
       category: form.category,
+      is_percentage: form.is_percentage,
+      percentage_basis: form.is_percentage ? form.percentage_basis : undefined,
+      percentage_value: form.is_percentage ? (parseFloat(form.percentage_value) || 0) : undefined,
+      percentage_pay_id: form.is_percentage && form.percentage_basis === 'specific_pay' && form.percentage_pay_id
+        ? parseInt(form.percentage_pay_id)
+        : undefined,
     }
     if (editing) {
       await window.api.expenses.update(editing.id, data)
@@ -587,6 +615,58 @@ function ExpensesTab({ expenses, accounts, income, onRefresh }: { expenses: Expe
           <DialogContent title={editing ? 'Edit Expense' : 'Add Expense'}>
             <div className="space-y-4">
               <Input label="Expense name" placeholder="e.g. Electricity, Netflix, Car Insurance" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+
+              {/* Fixed vs percentage toggle */}
+              <div className="flex items-center bg-surface-2 rounded-lg border border-border p-1">
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, is_percentage: false }))}
+                  className={`flex-1 text-xs py-1.5 rounded transition-colors ${
+                    !form.is_percentage ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  Fixed amount
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, is_percentage: true }))}
+                  className={`flex-1 text-xs py-1.5 rounded transition-colors ${
+                    form.is_percentage ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  % of pay
+                </button>
+              </div>
+
+              {/* Percentage-mode fields */}
+              {form.is_percentage && (
+                <div className="rounded-lg border border-border bg-surface-2/40 p-3 space-y-3">
+                  <Select value={form.percentage_basis} onValueChange={v => setForm(f => ({ ...f, percentage_basis: v as any }))}>
+                    <SelectTrigger label="Take % of"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="free_cashflow">Free cashflow (what's left after fixed bills + goals)</SelectItem>
+                      <SelectItem value="combined_income">Combined weekly income</SelectItem>
+                      {income.length > 0 && <SelectItem value="specific_pay">A specific person's pay</SelectItem>}
+                    </SelectContent>
+                  </Select>
+                  {form.percentage_basis === 'specific_pay' && income.length > 0 && (
+                    <Select value={form.percentage_pay_id || (income[0] ? String(income[0].id) : '')} onValueChange={v => setForm(f => ({ ...f, percentage_pay_id: v }))}>
+                      <SelectTrigger label="Whose pay"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {income.map(src => <SelectItem key={src.id} value={String(src.id)}>{src.person_name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <Input
+                    label="Percentage (%)"
+                    type="number"
+                    placeholder="5"
+                    value={form.percentage_value}
+                    onChange={e => setForm(f => ({ ...f, percentage_value: e.target.value }))}
+                    hint="e.g. 5 = 5% of the chosen basis"
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <Select value={form.frequency} onValueChange={v => setForm(f => ({ ...f, frequency: v }))}>
                   <SelectTrigger label="Frequency"><SelectValue /></SelectTrigger>
@@ -681,7 +761,7 @@ function ExpensesTab({ expenses, accounts, income, onRefresh }: { expenses: Expe
             <p className="text-center text-sm text-text-muted py-8">No expenses match "{search}".</p>
           ) : activeCategories.map(cat => {
             const items = grouped[cat]
-            const weeklyTotal = items.reduce((s, e) => s + toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0), 0)
+            const weeklyTotal = items.reduce((s, e) => s + (effective[e.id] ?? 0), 0)
             const expanded = isExpanded(cat)
             return (
               <div key={cat} className="rounded-xl border border-border bg-surface overflow-hidden">
@@ -721,18 +801,32 @@ function ExpensesTab({ expenses, accounts, income, onRefresh }: { expenses: Expe
                             <div className="flex items-baseline justify-between gap-2">
                               <p className="text-sm font-medium text-text-primary truncate">{exp.name}</p>
                               <p className="text-sm font-semibold text-text-primary tabular-nums flex-shrink-0">
-                                {formatCurrency(toWeeklyAmount(exp.allocation_amount ?? exp.amount, exp.frequency) + (exp.weekly_extra ?? 0))}
+                                {formatCurrency(effective[exp.id] ?? 0)}
                                 <span className="text-[10px] text-text-muted">/wk</span>
                               </p>
                             </div>
                             <p className="text-[11px] text-text-muted mt-0.5">
-                              {formatCurrency(exp.amount)} · {exp.frequency}
-                              {dueLabel && ` · due ${dueLabel}`}
-                              {exp.allocation_amount && exp.allocation_amount !== exp.amount && (
-                                <span className="text-accent"> · alloc {formatCurrency(exp.allocation_amount)}</span>
-                              )}
-                              {exp.weekly_extra && exp.weekly_extra > 0 && (
-                                <span className="text-accent"> · +{formatCurrency(exp.weekly_extra)}/wk</span>
+                              {exp.is_percentage ? (
+                                <>
+                                  <span className="text-accent">{exp.percentage_value}% of {
+                                    exp.percentage_basis === 'free_cashflow' ? 'free cashflow'
+                                    : exp.percentage_basis === 'combined_income' ? 'combined income'
+                                    : exp.percentage_basis === 'specific_pay' && exp.percentage_pay_id
+                                      ? (income.find(i => i.id === exp.percentage_pay_id)?.person_name ?? 'pay') + "'s pay"
+                                      : 'pay'
+                                  }</span>
+                                </>
+                              ) : (
+                                <>
+                                  {formatCurrency(exp.amount)} · {exp.frequency}
+                                  {dueLabel && ` · due ${dueLabel}`}
+                                  {exp.allocation_amount && exp.allocation_amount !== exp.amount && (
+                                    <span className="text-accent"> · alloc {formatCurrency(exp.allocation_amount)}</span>
+                                  )}
+                                  {exp.weekly_extra && exp.weekly_extra > 0 && (
+                                    <span className="text-accent"> · +{formatCurrency(exp.weekly_extra)}/wk</span>
+                                  )}
+                                </>
                               )}
                             </p>
                             <div className="flex items-center gap-1 mt-1 text-[10px] text-text-secondary flex-wrap">

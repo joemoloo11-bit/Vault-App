@@ -22,6 +22,11 @@ function initSchema(db: Database.Database): void {
   try { db.exec('ALTER TABLE expenses ADD COLUMN allocation_amount REAL') } catch {}
   try { db.exec('ALTER TABLE expenses ADD COLUMN weekly_extra REAL') } catch {}
   try { db.exec('ALTER TABLE income_sources ADD COLUMN payday_reference TEXT') } catch {}
+  // v1.11.0 — percentage-based expense allocations
+  try { db.exec('ALTER TABLE expenses ADD COLUMN is_percentage INTEGER NOT NULL DEFAULT 0') } catch {}
+  try { db.exec('ALTER TABLE expenses ADD COLUMN percentage_basis TEXT') } catch {}
+  try { db.exec('ALTER TABLE expenses ADD COLUMN percentage_value REAL') } catch {}
+  try { db.exec('ALTER TABLE expenses ADD COLUMN percentage_pay_id INTEGER REFERENCES income_sources(id) ON DELETE SET NULL') } catch {}
   // v1.10.3 — single-person funding attribution
   try { db.exec('ALTER TABLE expenses ADD COLUMN funded_by_income_id INTEGER REFERENCES income_sources(id) ON DELETE SET NULL') } catch {}
   // v1.5.0 — money flow architecture
@@ -214,18 +219,23 @@ export function dbGetExpenses() {
 export function dbSaveExpense(data: {
   name: string; amount: number; allocation_amount?: number; weekly_extra?: number; frequency: string;
   due_day?: number; account_id?: number; save_account_id?: number; debit_account_id?: number;
-  funded_by_income_id?: number; category: string
+  funded_by_income_id?: number; category: string;
+  is_percentage?: boolean; percentage_basis?: string; percentage_value?: number; percentage_pay_id?: number
 }) {
   const saveId = data.save_account_id ?? data.account_id ?? null
   const stmt = getDb().prepare(
-    'INSERT INTO expenses (name, amount, allocation_amount, weekly_extra, frequency, due_day, account_id, save_account_id, debit_account_id, funded_by_income_id, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO expenses (name, amount, allocation_amount, weekly_extra, frequency, due_day, account_id, save_account_id, debit_account_id, funded_by_income_id, category, is_percentage, percentage_basis, percentage_value, percentage_pay_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   )
   const result = stmt.run(
     data.name, data.amount, data.allocation_amount ?? null, data.weekly_extra ?? null,
     data.frequency, data.due_day ?? null,
     saveId, saveId, data.debit_account_id ?? null,
     data.funded_by_income_id ?? null,
-    data.category
+    data.category,
+    data.is_percentage ? 1 : 0,
+    data.percentage_basis ?? null,
+    data.percentage_value ?? null,
+    data.percentage_pay_id ?? null
   )
   return getDb().prepare('SELECT * FROM expenses WHERE id = ?').get(result.lastInsertRowid)
 }
@@ -233,7 +243,9 @@ export function dbSaveExpense(data: {
 export function dbUpdateExpense(id: number, data: Partial<{
   name: string; amount: number; allocation_amount: number | null; weekly_extra: number | null;
   frequency: string; due_day: number; account_id: number; save_account_id: number;
-  debit_account_id: number; funded_by_income_id: number | null; category: string
+  debit_account_id: number; funded_by_income_id: number | null; category: string;
+  is_percentage: number | boolean; percentage_basis: string | null; percentage_value: number | null;
+  percentage_pay_id: number | null
 }>) {
   const entries = Object.entries(data).filter(([, v]) => v !== undefined)
   if (entries.length === 0) return getDb().prepare('SELECT * FROM expenses WHERE id = ?').get(id)

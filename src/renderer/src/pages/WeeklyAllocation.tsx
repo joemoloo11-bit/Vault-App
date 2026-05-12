@@ -5,8 +5,8 @@ import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { useToast } from '@renderer/components/ui/toast'
 import { formatCurrency, getCurrentWeekStart, getWeekLabel } from '@renderer/lib/utils'
-import { toWeeklyAmount, isPayWeek } from '@renderer/types'
-import type { Account, IncomeSource, Expense, Transfer, BalanceLog, PayOverride } from '@renderer/types'
+import { isPayWeek, computeWeeklyCashflow } from '@renderer/types'
+import type { Account, IncomeSource, Expense, Transfer, BalanceLog, PayOverride, Goal } from '@renderer/types'
 import { addDays, format, subDays } from 'date-fns'
 
 export default function WeeklyAllocation() {
@@ -16,6 +16,7 @@ export default function WeeklyAllocation() {
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [transfers, setTransfers] = useState<Transfer[]>([])
   const [latestLogs, setLatestLogs] = useState<BalanceLog[]>([])
+  const [goals, setGoals] = useState<Goal[]>([])
   const [payOverrides, setPayOverrides] = useState<PayOverride[]>([])
   const [editingPayId, setEditingPayId] = useState<number | null>(null)
   const [payDraft, setPayDraft] = useState('')
@@ -28,16 +29,18 @@ export default function WeeklyAllocation() {
   useEffect(() => { loadWeekData() }, [weekStart])
 
   async function loadBase() {
-    const [acc, inc, exp, logs] = await Promise.all([
+    const [acc, inc, exp, logs, gls] = await Promise.all([
       window.api.accounts.getAll(),
       window.api.income.getAll(),
       window.api.expenses.getAll(),
       window.api.balances.getLatest(),
+      window.api.goals.getAll(),
     ])
     setAccounts(acc)
     setIncome(inc)
     setExpenses(exp)
     setLatestLogs(logs)
+    setGoals(gls as Goal[])
   }
 
   async function loadWeekData() {
@@ -102,6 +105,8 @@ export default function WeeklyAllocation() {
     transferred: number      // sum of those
   }
 
+  const cashflow = useMemo(() => computeWeeklyCashflow(expenses, income, goals), [expenses, income, goals])
+
   const routes = useMemo<Route[]>(() => {
     const map = new Map<string, Route>()
     for (const e of expenses) {
@@ -112,7 +117,7 @@ export default function WeeklyAllocation() {
       const toAccount = accounts.find(a => a.id === toId)
       if (!fromAccount || !toAccount) continue
       const key = `${fromId}-${toId}`
-      const weekly = toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0)
+      const weekly = cashflow.effective[e.id] ?? 0
       const existing = map.get(key)
       if (existing) {
         existing.bills.push(e)
@@ -144,7 +149,7 @@ export default function WeeklyAllocation() {
       if (e.debit_account_id && e.debit_account_id !== fromId) continue
       const account = accounts.find(a => a.id === fromId)
       if (!account) continue
-      const weekly = toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0)
+      const weekly = cashflow.effective[e.id] ?? 0
       const existing = map.get(account.id)
       if (existing) {
         existing.bills.push(e)
@@ -154,7 +159,7 @@ export default function WeeklyAllocation() {
       }
     }
     return Array.from(map.values()).sort((a, b) => a.account.name.localeCompare(b.account.name))
-  }, [expenses, accounts])
+  }, [expenses, accounts, cashflow])
 
   // ── Pay context (real cash arriving this week, not weekly average) ────────
 

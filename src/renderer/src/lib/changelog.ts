@@ -8,6 +8,20 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.11.0',
+    date: '2026-05-09',
+    title: 'Percentage Allocations + Cashflow Clarity',
+    highlights: [
+      'New "% of pay" expense type. In the Expense form, toggle "Fixed amount" vs "% of pay" to set up a percentage-based allocation. Choose your basis: free cashflow (what\'s left after fixed bills + goals), combined weekly income, or a specific person\'s pay.',
+      'Example: "5% of Alex\'s pay → Dog medical fund" — the app calculates the dollar amount automatically based on Alex\'s current pay rate.',
+      'Single source of truth for cashflow math (computeWeeklyCashflow helper). Both Dashboard and Budget Setup now use the same numbers — no more inconsistencies. % expenses are calculated dynamically and roll up into the same totals.',
+      'Free Cashflow card now shows the math explicitly: "$3,531 − $2,946 − $0 goals". No more guessing what the number means.',
+      '"Weekly Expenses" renamed to "Weekly Allocations" — shows what\'s actually being put aside per week (allocation amounts + buffers + % expenses), with raw bill cost shown as a sub-note.',
+      'Pay Calendar (8-week forecast) now shows per-week REMAINING cashflow under each week\'s pay. Green = positive, red = shortfall. Makes it obvious which upcoming weeks are tight.',
+      'Expense cards display a teal "5% of Alex\'s pay" chip for percentage-based expenses instead of frequency/amount.',
+    ],
+  },
+  {
     version: '1.10.4',
     date: '2026-05-09',
     title: 'Free Cashflow Alignment + Per-Week Pay Adjustments',

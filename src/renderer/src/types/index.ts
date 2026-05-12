@@ -49,6 +49,8 @@ export interface IncomeSourceInput {
   payday_reference?: string
 }
 
+export type PercentageBasis = 'free_cashflow' | 'combined_income' | 'specific_pay'
+
 export interface Expense {
   id: number
   name: string
@@ -62,6 +64,11 @@ export interface Expense {
   debit_account_id?: number
   funded_by_income_id?: number
   funded_by_person_name?: string
+  // Percentage allocations (v1.11.0)
+  is_percentage?: number  // 0 or 1
+  percentage_basis?: PercentageBasis
+  percentage_value?: number
+  percentage_pay_id?: number  // when basis = 'specific_pay'
   account_name?: string
   account_color?: string
   save_account_name?: string
@@ -84,6 +91,10 @@ export interface ExpenseInput {
   debit_account_id?: number
   funded_by_income_id?: number
   category: string
+  is_percentage?: boolean
+  percentage_basis?: PercentageBasis
+  percentage_value?: number
+  percentage_pay_id?: number
 }
 
 export interface BalanceLog {
@@ -274,6 +285,87 @@ export function isPayWeek(reference: string, frequency: string, weekStart: strin
   weekEndDate.setDate(weekEndDate.getDate() + 7)
   const payday = getNextPayday(reference, frequency, weekStartDate)
   return payday >= weekStartDate && payday < weekEndDate
+}
+
+// Single source of truth for weekly cashflow math.
+// Handles both fixed expenses and percentage-based ones.
+export interface CashflowResult {
+  weeklyIncome: number
+  fixedAllocations: number     // sum of non-percentage expenses (weekly equiv + buffer)
+  percentageAllocations: number  // sum of percentage expenses, evaluated
+  totalAllocations: number     // fixed + percentage
+  goalContributions: number
+  freeCashflow: number         // income - total - goals
+  // Per-expense effective weekly amount (for ranking / display)
+  effective: Record<number, number>
+}
+
+export function computeWeeklyCashflow(
+  expenses: Expense[],
+  income: IncomeSource[],
+  goals: Goal[]
+): CashflowResult {
+  const weeklyIncome = income.reduce((s, i) => s + toWeeklyAmount(i.amount, i.frequency), 0)
+  const goalContributions = goals
+    .filter(g => g.status === 'active')
+    .reduce((s, g) => s + g.weekly_contribution, 0)
+  const incomeById: Record<number, IncomeSource> = {}
+  income.forEach(i => { incomeById[i.id] = i })
+
+  // Pass 1: fixed (non-percentage) expenses
+  const effective: Record<number, number> = {}
+  const fixedExpenses = expenses.filter(e => !e.is_percentage)
+  const pctExpenses = expenses.filter(e => !!e.is_percentage)
+  let fixedAllocations = 0
+  for (const e of fixedExpenses) {
+    const wk = toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0)
+    effective[e.id] = wk
+    fixedAllocations += wk
+  }
+
+  // Free cashflow available for % expenses to draw from
+  const freeBeforePct = Math.max(0, weeklyIncome - fixedAllocations - goalContributions)
+
+  // Pass 2: percentage expenses
+  let percentageAllocations = 0
+  for (const e of pctExpenses) {
+    const pct = (e.percentage_value ?? 0) / 100
+    let wk = 0
+    if (e.percentage_basis === 'free_cashflow') {
+      wk = freeBeforePct * pct
+    } else if (e.percentage_basis === 'combined_income') {
+      wk = weeklyIncome * pct
+    } else if (e.percentage_basis === 'specific_pay' && e.percentage_pay_id) {
+      const src = incomeById[e.percentage_pay_id]
+      if (src) wk = toWeeklyAmount(src.amount, src.frequency) * pct
+    }
+    effective[e.id] = wk
+    percentageAllocations += wk
+  }
+
+  const totalAllocations = fixedAllocations + percentageAllocations
+  const freeCashflow = weeklyIncome - totalAllocations - goalContributions
+
+  return {
+    weeklyIncome,
+    fixedAllocations,
+    percentageAllocations,
+    totalAllocations,
+    goalContributions,
+    freeCashflow,
+    effective,
+  }
+}
+
+// Effective weekly $ for a single expense, given context.
+// Falls back to fixed calc if no income/goals provided.
+export function getEffectiveWeekly(exp: Expense, expenses?: Expense[], income?: IncomeSource[], goals?: Goal[]): number {
+  if (!exp.is_percentage) {
+    return toWeeklyAmount(exp.allocation_amount ?? exp.amount, exp.frequency) + (exp.weekly_extra ?? 0)
+  }
+  if (!expenses || !income || !goals) return 0
+  const result = computeWeeklyCashflow(expenses, income, goals)
+  return result.effective[exp.id] ?? 0
 }
 
 // Returns number of days until the next payday (0 = today)
