@@ -104,6 +104,18 @@ export interface BalanceLogInput {
   notes?: string
 }
 
+export interface PayOverride {
+  id: number
+  income_source_id: number
+  week_start: string
+  amount: number
+  notes?: string
+  created_at: string
+  person_name?: string
+  frequency?: string
+  base_amount?: number
+}
+
 export interface Transfer {
   id: number
   from_account_id: number

@@ -103,6 +103,16 @@ function initSchema(db: Database.Database): void {
       snapshot_date TEXT NOT NULL DEFAULT (date('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS pay_event_overrides (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      income_source_id INTEGER NOT NULL REFERENCES income_sources(id) ON DELETE CASCADE,
+      week_start TEXT NOT NULL,
+      amount REAL NOT NULL,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(income_source_id, week_start)
+    );
+
     CREATE TABLE IF NOT EXISTS transfers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       from_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -358,6 +368,42 @@ export function dbGetGoalSnapshots(goalId: number) {
   return getDb().prepare(
     'SELECT * FROM goal_snapshots WHERE goal_id = ? ORDER BY snapshot_date'
   ).all(goalId)
+}
+
+// ─── Pay Event Overrides ──────────────────────────────────────────────────────
+
+export function dbGetPayOverridesForWeek(weekStart: string) {
+  return getDb().prepare(`
+    SELECT po.*, i.person_name, i.frequency, i.amount as base_amount
+    FROM pay_event_overrides po
+    JOIN income_sources i ON po.income_source_id = i.id
+    WHERE po.week_start = ?
+  `).all(weekStart)
+}
+
+export function dbUpsertPayOverride(data: {
+  income_source_id: number; week_start: string; amount: number; notes?: string
+}) {
+  const existing = getDb().prepare(
+    'SELECT id FROM pay_event_overrides WHERE income_source_id = ? AND week_start = ?'
+  ).get(data.income_source_id, data.week_start) as { id: number } | undefined
+
+  if (existing) {
+    getDb().prepare(
+      'UPDATE pay_event_overrides SET amount = ?, notes = ? WHERE id = ?'
+    ).run(data.amount, data.notes ?? null, existing.id)
+    return getDb().prepare('SELECT * FROM pay_event_overrides WHERE id = ?').get(existing.id)
+  }
+  const result = getDb().prepare(
+    'INSERT INTO pay_event_overrides (income_source_id, week_start, amount, notes) VALUES (?, ?, ?, ?)'
+  ).run(data.income_source_id, data.week_start, data.amount, data.notes ?? null)
+  return getDb().prepare('SELECT * FROM pay_event_overrides WHERE id = ?').get(result.lastInsertRowid)
+}
+
+export function dbDeletePayOverride(incomeSourceId: number, weekStart: string) {
+  getDb().prepare(
+    'DELETE FROM pay_event_overrides WHERE income_source_id = ? AND week_start = ?'
+  ).run(incomeSourceId, weekStart)
 }
 
 // ─── Transfers (Weekly Move) ──────────────────────────────────────────────────

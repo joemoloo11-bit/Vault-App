@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogTrigger, DialogClose } from '@renderer/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@renderer/components/ui/select'
 import { formatCurrency } from '@renderer/lib/utils'
 import { toWeeklyAmount, ACCOUNT_COLORS, EXPENSE_CATEGORIES, ACCOUNT_TYPE_OPTIONS } from '@renderer/types'
-import type { Account, IncomeSource, Expense, AccountType } from '@renderer/types'
+import type { Account, IncomeSource, Expense, AccountType, Goal } from '@renderer/types'
 import { ConfirmDialog } from '@renderer/components/ui/confirm-dialog'
 import { useToast } from '@renderer/components/ui/toast'
 
@@ -32,24 +32,28 @@ export default function BudgetSetup() {
   const [income, setIncome] = useState<IncomeSource[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [expenses, setExpenses] = useState<Expense[]>([])
+  const [goals, setGoals] = useState<Goal[]>([])
 
   useEffect(() => { loadAll() }, [])
 
   async function loadAll() {
-    const [inc, acc, exp] = await Promise.all([
+    const [inc, acc, exp, gls] = await Promise.all([
       window.api.income.getAll(),
       window.api.accounts.getAll(),
       window.api.expenses.getAll(),
+      window.api.goals.getAll(),
     ])
     setIncome(inc)
     setAccounts(acc)
     setExpenses(exp)
+    setGoals(gls as Goal[])
   }
 
   const weeklyIncome = income.reduce((sum, s) => sum + toWeeklyAmount(s.amount, s.frequency), 0)
   const weeklyExpenses = expenses.reduce((sum, e) => sum + toWeeklyAmount(e.amount, e.frequency), 0)
   const weeklyAllocations = expenses.reduce((sum, e) => sum + toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0), 0)
-  const freeCashflow = weeklyIncome - weeklyAllocations
+  const activeGoalContributions = goals.filter(g => g.status === 'active').reduce((sum, g) => sum + g.weekly_contribution, 0)
+  const freeCashflow = weeklyIncome - weeklyAllocations - activeGoalContributions
 
   return (
     <div className="p-6 space-y-6 animate-fade-in">
@@ -66,7 +70,7 @@ export default function BudgetSetup() {
           label="Free Cashflow"
           value={freeCashflow}
           color={freeCashflow >= 0 ? 'success' : 'danger'}
-          hint={weeklyAllocations !== weeklyExpenses ? `Allocating ${formatCurrency(weeklyAllocations)}/wk` : undefined}
+          hint={activeGoalContributions > 0 ? `After ${formatCurrency(weeklyAllocations)}/wk allocations + ${formatCurrency(activeGoalContributions)}/wk goals` : `After ${formatCurrency(weeklyAllocations)}/wk allocations`}
         />
       </div>
 

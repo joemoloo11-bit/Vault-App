@@ -8,6 +8,17 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.10.4',
+    date: '2026-05-09',
+    title: 'Free Cashflow Alignment + Per-Week Pay Adjustments',
+    highlights: [
+      'Free Cashflow now matches between Dashboard and Budget Setup. Both use the same formula: income − weekly allocations (incl. buffers) − active goal contributions. Goal contributions are now subtracted on Budget Setup too (was missing before).',
+      'Weekly Move: per-person pay amount is now editable for the current week. Pencil icon next to a name → enter the actual amount → save. Useful for shift workers with variable income. Adjustment is per-week-only; base amount in Budget Setup never changes.',
+      'Overridden pays show a teal "adjusted from $X" chip + a reset arrow to revert to the base amount.',
+      'New "Remaining" callout under the pay banner: shows Arriving / Transfers Planned / Remaining for the week, so you can see at a glance how much spending money is left after envelope transfers.',
+    ],
+  },
+  {
     version: '1.10.3',
     date: '2026-05-09',
     title: 'Single-Person Funded Bills',

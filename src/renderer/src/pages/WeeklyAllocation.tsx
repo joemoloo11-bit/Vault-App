@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
-import { ChevronLeft, ChevronRight, CheckCircle2, ArrowRight, DollarSign, Wallet, Coffee, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CheckCircle2, ArrowRight, DollarSign, Wallet, Coffee, Trash2, Pencil, RotateCcw } from 'lucide-react'
 import { Card, CardContent } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { useToast } from '@renderer/components/ui/toast'
 import { formatCurrency, getCurrentWeekStart, getWeekLabel } from '@renderer/lib/utils'
 import { toWeeklyAmount, isPayWeek } from '@renderer/types'
-import type { Account, IncomeSource, Expense, Transfer, BalanceLog } from '@renderer/types'
+import type { Account, IncomeSource, Expense, Transfer, BalanceLog, PayOverride } from '@renderer/types'
 import { addDays, format, subDays } from 'date-fns'
 
 export default function WeeklyAllocation() {
@@ -16,6 +16,9 @@ export default function WeeklyAllocation() {
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [transfers, setTransfers] = useState<Transfer[]>([])
   const [latestLogs, setLatestLogs] = useState<BalanceLog[]>([])
+  const [payOverrides, setPayOverrides] = useState<PayOverride[]>([])
+  const [editingPayId, setEditingPayId] = useState<number | null>(null)
+  const [payDraft, setPayDraft] = useState('')
   const [drafts, setDrafts] = useState<Record<string, string>>({}) // key: `${from}-${to}` → entered amount string
   const { toast } = useToast()
 
@@ -38,9 +41,53 @@ export default function WeeklyAllocation() {
   }
 
   async function loadWeekData() {
-    const tx = await (window.api as any).transfers.getWeek(weekStart) as Transfer[]
+    const [tx, overrides] = await Promise.all([
+      (window.api as any).transfers.getWeek(weekStart) as Promise<Transfer[]>,
+      (window.api as any).payOverrides.getWeek(weekStart) as Promise<PayOverride[]>,
+    ])
     setTransfers(tx)
+    setPayOverrides(overrides)
     setDrafts({})
+    setEditingPayId(null)
+    setPayDraft('')
+  }
+
+  function getEffectivePay(src: IncomeSource): number {
+    const override = payOverrides.find(o => o.income_source_id === src.id)
+    return override ? override.amount : src.amount
+  }
+  function hasOverride(src: IncomeSource): boolean {
+    return payOverrides.some(o => o.income_source_id === src.id)
+  }
+
+  async function savePayOverride(src: IncomeSource) {
+    const amt = parseFloat(payDraft)
+    if (isNaN(amt) || amt < 0) {
+      toast('Enter a valid amount', 'danger')
+      return
+    }
+    if (amt === src.amount) {
+      // No override needed if matches base
+      if (hasOverride(src)) {
+        await (window.api as any).payOverrides.delete(src.id, weekStart)
+      }
+    } else {
+      await (window.api as any).payOverrides.upsert({
+        income_source_id: src.id,
+        week_start: weekStart,
+        amount: amt,
+      })
+    }
+    toast(`${src.person_name}'s pay set to ${formatCurrency(amt)} this week`)
+    setEditingPayId(null)
+    setPayDraft('')
+    loadWeekData()
+  }
+
+  async function resetPayOverride(src: IncomeSource) {
+    await (window.api as any).payOverrides.delete(src.id, weekStart)
+    toast(`${src.person_name}'s pay reset to base (${formatCurrency(src.amount)})`)
+    loadWeekData()
   }
 
   // ── Money flow analysis ───────────────────────────────────────────────────
@@ -114,7 +161,10 @@ export default function WeeklyAllocation() {
   const payingThisWeek = income.filter(s =>
     s.payday_reference && isPayWeek(s.payday_reference, s.frequency, weekStart)
   )
-  const cashArrivingThisWeek = payingThisWeek.reduce((s, p) => s + p.amount, 0)
+  const cashArrivingThisWeek = payingThisWeek.reduce((s, p) => s + getEffectivePay(p), 0)
+  // Total suggested move across all routes this week
+  const totalSuggested = useMemo(() => routes.reduce((s, r) => s + r.weeklyAmount, 0), [routes])
+  const remainingFromPay = cashArrivingThisWeek - totalSuggested
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -172,17 +222,93 @@ export default function WeeklyAllocation() {
 
       {/* Pay context */}
       {payingThisWeek.length > 0 ? (
-        <div className="bg-accent/10 border border-accent/30 rounded-lg p-4 flex items-center gap-3">
-          <DollarSign size={18} className="text-accent flex-shrink-0" />
-          <div>
-            <p className="text-sm font-semibold text-text-primary">
-              {payingThisWeek.length > 1 ? 'Both pays arrive' : `${payingThisWeek[0].person_name}'s pay arrives`} this week
-            </p>
-            <p className="text-xs text-text-secondary mt-0.5">
-              {payingThisWeek.map(p => `${p.person_name}: ${formatCurrency(p.amount)}`).join(' · ')}
-              <span className="text-accent font-medium"> · {formatCurrency(cashArrivingThisWeek)} arriving</span>
-            </p>
+        <div className="bg-accent/10 border border-accent/30 rounded-lg p-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <DollarSign size={18} className="text-accent flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-text-primary">
+                {payingThisWeek.length > 1 ? 'Both pays arrive' : `${payingThisWeek[0].person_name}'s pay arrives`} this week
+              </p>
+              <p className="text-xs text-text-secondary mt-0.5">
+                <span className="text-accent font-medium">{formatCurrency(cashArrivingThisWeek)} arriving total</span>
+              </p>
+            </div>
           </div>
+
+          {/* Per-person editable rows */}
+          <div className="space-y-2 pl-7">
+            {payingThisWeek.map(src => {
+              const effective = getEffectivePay(src)
+              const isEditing = editingPayId === src.id
+              const isOverridden = hasOverride(src)
+              return (
+                <div key={src.id} className="flex items-center gap-2 text-sm">
+                  <span className="text-text-secondary min-w-[80px]">{src.person_name}:</span>
+                  {isEditing ? (
+                    <div className="flex items-center gap-1 flex-1 max-w-[300px]">
+                      <Input
+                        type="number"
+                        prefix="$"
+                        value={payDraft}
+                        onChange={e => setPayDraft(e.target.value)}
+                        placeholder={String(src.amount)}
+                        className="flex-1"
+                      />
+                      <Button size="sm" onClick={() => savePayOverride(src)}>Save</Button>
+                      <Button size="sm" variant="outline" onClick={() => { setEditingPayId(null); setPayDraft('') }}>Cancel</Button>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="text-text-primary tabular-nums font-medium">{formatCurrency(effective)}</span>
+                      {isOverridden && (
+                        <span className="text-[10px] text-accent bg-accent/10 border border-accent/30 rounded px-1.5 py-0.5">
+                          adjusted from {formatCurrency(src.amount)}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => { setEditingPayId(src.id); setPayDraft(String(effective)) }}
+                        className="text-text-muted hover:text-text-primary p-0.5"
+                        title="Adjust this week's pay"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                      {isOverridden && (
+                        <button
+                          onClick={() => resetPayOverride(src)}
+                          className="text-text-muted hover:text-text-primary p-0.5"
+                          title={`Reset to base (${formatCurrency(src.amount)})`}
+                        >
+                          <RotateCcw size={11} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Remaining callout */}
+          {totalSuggested > 0 && (
+            <div className="pl-7 pt-2 border-t border-accent/20">
+              <div className="grid grid-cols-3 gap-3 text-xs">
+                <div>
+                  <p className="text-text-muted text-[10px] uppercase tracking-wider">Arriving</p>
+                  <p className="text-text-primary tabular-nums font-semibold mt-0.5">{formatCurrency(cashArrivingThisWeek)}</p>
+                </div>
+                <div>
+                  <p className="text-text-muted text-[10px] uppercase tracking-wider">Transfers planned</p>
+                  <p className="text-text-primary tabular-nums font-semibold mt-0.5">{formatCurrency(totalSuggested)}</p>
+                </div>
+                <div>
+                  <p className="text-text-muted text-[10px] uppercase tracking-wider">Remaining</p>
+                  <p className={`tabular-nums font-semibold mt-0.5 ${remainingFromPay >= 0 ? 'text-success' : 'text-danger'}`}>
+                    {formatCurrency(remainingFromPay)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-surface-2/40 border border-border rounded-lg p-4 flex items-center gap-3">

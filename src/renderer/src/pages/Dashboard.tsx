@@ -77,11 +77,15 @@ export default function Dashboard() {
   const { accounts, income, expenses, latestLogs, goals, weeklyAllocations } = data
 
   const weeklyIncome = income.reduce((sum, s) => sum + toWeeklyAmount(s.amount, s.frequency), 0)
+  // Raw bill cost (used for the Weekly Expenses metric card — "what bills actually cost")
   const weeklyExpenses = expenses.reduce((sum, e) => sum + toWeeklyAmount(e.amount, e.frequency), 0)
+  // Allocations including buffer (used for free cashflow — what's actually moved away from spending money)
+  const weeklyAllocations = expenses.reduce((sum, e) =>
+    sum + toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0), 0)
   const activeGoalContributions = (goals as Goal[])
     .filter(g => g.status === 'active')
     .reduce((sum, g) => sum + g.weekly_contribution, 0)
-  const freeCashflow = weeklyIncome - weeklyExpenses - activeGoalContributions
+  const freeCashflow = weeklyIncome - weeklyAllocations - activeGoalContributions
   const cushionScore = getCushionScore(weeklyIncome, weeklyExpenses, latestLogs, accounts, expenses)
 
   // Bills due this week (day of month 1-7 range around now)

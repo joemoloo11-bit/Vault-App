@@ -57,6 +57,13 @@ contextBridge.exposeInMainWorld('api', {
     delete: (id: number) => ipcRenderer.invoke('transfers:delete', id),
   },
 
+  // Pay event overrides (per-week pay amount adjustments)
+  payOverrides: {
+    getWeek: (weekStart: string) => ipcRenderer.invoke('payOverrides:getWeek', weekStart),
+    upsert: (data: unknown) => ipcRenderer.invoke('payOverrides:upsert', data),
+    delete: (incomeSourceId: number, weekStart: string) => ipcRenderer.invoke('payOverrides:delete', incomeSourceId, weekStart),
+  },
+
   // Goals
   goals: {
     getAll: () => ipcRenderer.invoke('goals:getAll'),

@@ -11,6 +11,7 @@ import {
   dbGetBalanceLogs, dbGetLatestBalances, dbSaveBalanceLog, dbDeleteBalanceLog,
   dbGetWeeklyAllocations, dbUpsertWeeklyAllocation, dbSetAllocationFunded,
   dbGetTransfersForWeek, dbSaveTransfer, dbDeleteTransfer,
+  dbGetPayOverridesForWeek, dbUpsertPayOverride, dbDeletePayOverride,
   dbGetGoals, dbSaveGoal, dbUpdateGoal, dbDeleteGoal,
   dbSaveGoalSnapshot, dbGetGoalSnapshots,
   dbGetTestRuns, dbSaveTestRun, dbUpdateTestRun, dbDeleteTestRun
@@ -100,6 +101,11 @@ app.whenReady().then(() => {
   ipcMain.handle('transfers:getWeek', (_, weekStart) => dbGetTransfersForWeek(weekStart))
   ipcMain.handle('transfers:save', (_, data) => dbSaveTransfer(data))
   ipcMain.handle('transfers:delete', (_, id) => dbDeleteTransfer(id))
+
+  // ─── Pay event overrides (per-week pay adjustments) ───────────────────────
+  ipcMain.handle('payOverrides:getWeek', (_, weekStart) => dbGetPayOverridesForWeek(weekStart))
+  ipcMain.handle('payOverrides:upsert', (_, data) => dbUpsertPayOverride(data))
+  ipcMain.handle('payOverrides:delete', (_, incomeSourceId, weekStart) => dbDeletePayOverride(incomeSourceId, weekStart))
 
   // ─── Goals ────────────────────────────────────────────────────────────────
   ipcMain.handle('goals:getAll', () => dbGetGoals())
