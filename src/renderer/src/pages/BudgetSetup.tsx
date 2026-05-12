@@ -99,7 +99,7 @@ export default function BudgetSetup() {
         <AccountsTab accounts={accounts} onRefresh={loadAll} />
       )}
       {tab === 'expenses' && (
-        <ExpensesTab expenses={expenses} accounts={accounts} onRefresh={loadAll} />
+        <ExpensesTab expenses={expenses} accounts={accounts} income={income} onRefresh={loadAll} />
       )}
     </div>
   )
@@ -450,7 +450,7 @@ function AccountsTab({ accounts, onRefresh }: { accounts: Account[]; onRefresh: 
 
 // ─── Expenses Tab ─────────────────────────────────────────────────────────────
 
-function ExpensesTab({ expenses, accounts, onRefresh }: { expenses: Expense[]; accounts: Account[]; onRefresh: () => void }) {
+function ExpensesTab({ expenses, accounts, income, onRefresh }: { expenses: Expense[]; accounts: Account[]; income: IncomeSource[]; onRefresh: () => void }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Expense | null>(null)
   const [confirmId, setConfirmId] = useState<number | null>(null)
@@ -460,7 +460,7 @@ function ExpensesTab({ expenses, accounts, onRefresh }: { expenses: Expense[]; a
   const { toast } = useToast()
   const [form, setForm] = useState({
     name: '', amount: '', allocation_amount: '', weekly_extra: '', frequency: 'monthly', due_day: '',
-    save_account_id: '', debit_account_id: '', category: 'Bills & Utilities'
+    save_account_id: '', debit_account_id: '', funded_by_income_id: '', category: 'Bills & Utilities'
   })
 
   function toggleCategory(cat: string) {
@@ -475,7 +475,7 @@ function ExpensesTab({ expenses, accounts, onRefresh }: { expenses: Expense[]; a
     setEditing(null)
     setForm({
       name: '', amount: '', allocation_amount: '', weekly_extra: '', frequency: 'monthly', due_day: '',
-      save_account_id: '', debit_account_id: '', category: 'Bills & Utilities'
+      save_account_id: '', debit_account_id: '', funded_by_income_id: '', category: 'Bills & Utilities'
     })
     setOpen(true)
   }
@@ -490,6 +490,7 @@ function ExpensesTab({ expenses, accounts, onRefresh }: { expenses: Expense[]; a
       due_day: exp.due_day ? String(exp.due_day) : '',
       save_account_id: exp.save_account_id ? String(exp.save_account_id) : (exp.account_id ? String(exp.account_id) : ''),
       debit_account_id: exp.debit_account_id ? String(exp.debit_account_id) : '',
+      funded_by_income_id: exp.funded_by_income_id ? String(exp.funded_by_income_id) : '',
       category: exp.category,
     })
     setOpen(true)
@@ -508,6 +509,7 @@ function ExpensesTab({ expenses, accounts, onRefresh }: { expenses: Expense[]; a
       due_day: form.due_day ? parseInt(form.due_day) : undefined,
       save_account_id: form.save_account_id ? parseInt(form.save_account_id) : undefined,
       debit_account_id: form.debit_account_id ? parseInt(form.debit_account_id) : undefined,
+      funded_by_income_id: form.funded_by_income_id ? parseInt(form.funded_by_income_id) : undefined,
       category: form.category,
     }
     if (editing) {
@@ -622,6 +624,16 @@ function ExpensesTab({ expenses, accounts, onRefresh }: { expenses: Expense[]; a
                   </SelectContent>
                 </Select>
               </div>
+              {income.length > 0 && (
+                <Select value={form.funded_by_income_id || 'shared'} onValueChange={v => setForm(f => ({ ...f, funded_by_income_id: v === 'shared' ? '' : v }))}>
+                  <SelectTrigger label="Funded by"><SelectValue placeholder="Shared (default)" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="shared">Shared (both pays)</SelectItem>
+                    {income.map(src => <SelectItem key={src.id} value={String(src.id)}>{src.person_name} only</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+
               <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v }))}>
                 <SelectTrigger label="Category"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -719,17 +731,24 @@ function ExpensesTab({ expenses, accounts, onRefresh }: { expenses: Expense[]; a
                                 <span className="text-accent"> · +{formatCurrency(exp.weekly_extra)}/wk</span>
                               )}
                             </p>
-                            {(exp.save_account_name || exp.account_name) && (
-                              <div className="flex items-center gap-1 mt-1 text-[10px] text-text-secondary">
-                                <span className="bg-surface border border-border rounded px-1.5 py-0.5">{exp.save_account_name ?? exp.account_name}</span>
-                                {exp.debit_account_name && exp.debit_account_name !== (exp.save_account_name ?? exp.account_name) && (
-                                  <>
-                                    <ArrowRight size={9} className="text-text-muted" />
-                                    <span className="bg-surface border border-border rounded px-1.5 py-0.5">{exp.debit_account_name}</span>
-                                  </>
-                                )}
-                              </div>
-                            )}
+                            <div className="flex items-center gap-1 mt-1 text-[10px] text-text-secondary flex-wrap">
+                              {(exp.save_account_name || exp.account_name) && (
+                                <>
+                                  <span className="bg-surface border border-border rounded px-1.5 py-0.5">{exp.save_account_name ?? exp.account_name}</span>
+                                  {exp.debit_account_name && exp.debit_account_name !== (exp.save_account_name ?? exp.account_name) && (
+                                    <>
+                                      <ArrowRight size={9} className="text-text-muted" />
+                                      <span className="bg-surface border border-border rounded px-1.5 py-0.5">{exp.debit_account_name}</span>
+                                    </>
+                                  )}
+                                </>
+                              )}
+                              {exp.funded_by_person_name && (
+                                <span className="bg-accent/10 border border-accent/30 text-accent rounded px-1.5 py-0.5">
+                                  {exp.funded_by_person_name} only
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <div className="flex gap-0.5 opacity-50 group-hover:opacity-100 transition-opacity flex-shrink-0">
                             <Button size="icon" variant="ghost" onClick={() => openEdit(exp)}><Pencil size={12} /></Button>

@@ -8,6 +8,17 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.10.3',
+    date: '2026-05-09',
+    title: 'Single-Person Funded Bills',
+    highlights: [
+      'Each expense now has a "Funded by" option in Budget Setup. Default is "Shared" — split between both pays.',
+      'Pick "Alex only" or "James only" to attribute a bill to a single income source (e.g. Alex\'s gym membership comes out of Alex\'s pay only).',
+      'Expense cards show a teal "Alex only" / "James only" chip when attributed, so you can see at a glance which bills belong to who.',
+      'This sets up the foundation for v1.11.0 Pay Plan — the auto-split calculator will use these attributions to compute each person\'s envelope amounts correctly.',
+    ],
+  },
+  {
     version: '1.10.2',
     date: '2026-05-09',
     title: 'Budget Setup Expenses Redesign',

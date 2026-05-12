@@ -22,6 +22,8 @@ function initSchema(db: Database.Database): void {
   try { db.exec('ALTER TABLE expenses ADD COLUMN allocation_amount REAL') } catch {}
   try { db.exec('ALTER TABLE expenses ADD COLUMN weekly_extra REAL') } catch {}
   try { db.exec('ALTER TABLE income_sources ADD COLUMN payday_reference TEXT') } catch {}
+  // v1.10.3 — single-person funding attribution
+  try { db.exec('ALTER TABLE expenses ADD COLUMN funded_by_income_id INTEGER REFERENCES income_sources(id) ON DELETE SET NULL') } catch {}
   // v1.5.0 — money flow architecture
   try { db.exec('ALTER TABLE expenses ADD COLUMN save_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL') } catch {}
   try { db.exec('ALTER TABLE expenses ADD COLUMN debit_account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL') } catch {}
@@ -188,27 +190,31 @@ export function dbGetExpenses() {
       sa.name as save_account_name, sa.color as save_account_color,
       da.name as debit_account_name, da.color as debit_account_color,
       COALESCE(sa.name, a.name) as account_name,
-      COALESCE(sa.color, a.color) as account_color
+      COALESCE(sa.color, a.color) as account_color,
+      inc.person_name as funded_by_person_name
     FROM expenses e
     LEFT JOIN accounts a ON e.account_id = a.id
     LEFT JOIN accounts sa ON e.save_account_id = sa.id
     LEFT JOIN accounts da ON e.debit_account_id = da.id
+    LEFT JOIN income_sources inc ON e.funded_by_income_id = inc.id
     ORDER BY e.name
   `).all()
 }
 
 export function dbSaveExpense(data: {
   name: string; amount: number; allocation_amount?: number; weekly_extra?: number; frequency: string;
-  due_day?: number; account_id?: number; save_account_id?: number; debit_account_id?: number; category: string
+  due_day?: number; account_id?: number; save_account_id?: number; debit_account_id?: number;
+  funded_by_income_id?: number; category: string
 }) {
   const saveId = data.save_account_id ?? data.account_id ?? null
   const stmt = getDb().prepare(
-    'INSERT INTO expenses (name, amount, allocation_amount, weekly_extra, frequency, due_day, account_id, save_account_id, debit_account_id, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO expenses (name, amount, allocation_amount, weekly_extra, frequency, due_day, account_id, save_account_id, debit_account_id, funded_by_income_id, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   )
   const result = stmt.run(
     data.name, data.amount, data.allocation_amount ?? null, data.weekly_extra ?? null,
     data.frequency, data.due_day ?? null,
     saveId, saveId, data.debit_account_id ?? null,
+    data.funded_by_income_id ?? null,
     data.category
   )
   return getDb().prepare('SELECT * FROM expenses WHERE id = ?').get(result.lastInsertRowid)
@@ -217,7 +223,7 @@ export function dbSaveExpense(data: {
 export function dbUpdateExpense(id: number, data: Partial<{
   name: string; amount: number; allocation_amount: number | null; weekly_extra: number | null;
   frequency: string; due_day: number; account_id: number; save_account_id: number;
-  debit_account_id: number; category: string
+  debit_account_id: number; funded_by_income_id: number | null; category: string
 }>) {
   const entries = Object.entries(data).filter(([, v]) => v !== undefined)
   if (entries.length === 0) return getDb().prepare('SELECT * FROM expenses WHERE id = ?').get(id)

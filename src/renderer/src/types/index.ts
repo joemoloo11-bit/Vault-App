@@ -60,6 +60,8 @@ export interface Expense {
   account_id?: number
   save_account_id?: number
   debit_account_id?: number
+  funded_by_income_id?: number
+  funded_by_person_name?: string
   account_name?: string
   account_color?: string
   save_account_name?: string
@@ -80,6 +82,7 @@ export interface ExpenseInput {
   account_id?: number
   save_account_id?: number
   debit_account_id?: number
+  funded_by_income_id?: number
   category: string
 }
 
