@@ -8,6 +8,18 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.11.3',
+    date: '2026-05-09',
+    title: 'Save Changes Fix + Weekly Move Math Reworked',
+    highlights: [
+      'Fixed: editing an expense and clicking "Save Changes" was crashing with "SQLite3 can only bind numbers, strings, bigints, buffers, and null" — the is_percentage boolean wasn\'t converted to 0/1 before the SQL UPDATE. Now converts properly.',
+      'Weekly Move "Remaining" math rebuilt — now accounts for ALL expenses (transfers, accumulating envelopes, percentage allocations) plus goal contributions, not just the transfer routes.',
+      'Per-pay attribution now flows through: Alex-only items only deduct from Alex\'s pay, James-only items only deduct from James\'s pay, shared items split evenly across all income sources.',
+      'New per-pay breakdown shown inline on the Weekly Move page — for each person\'s pay event, you see the math step-by-step: Arriving − their attributed expenses × period − their share of joint × period ÷ payers − their share of goals = Remaining from this pay.',
+      'When both pays arrive in the same week, a combined "Total remaining this week" line summarises.',
+    ],
+  },
+  {
     version: '1.11.2',
     date: '2026-05-09',
     title: 'Crash Diagnostic — ErrorBoundary',

@@ -167,9 +167,60 @@ export default function WeeklyAllocation() {
     s.payday_reference && isPayWeek(s.payday_reference, s.frequency, weekStart)
   )
   const cashArrivingThisWeek = payingThisWeek.reduce((s, p) => s + getEffectivePay(p), 0)
-  // Total suggested move across all routes this week
-  const totalSuggested = useMemo(() => routes.reduce((s, r) => s + r.weeklyAmount, 0), [routes])
-  const remainingFromPay = cashArrivingThisWeek - totalSuggested
+
+  // ── Per-pay-event attribution ───────────────────────────────────────────
+  // For each payer arriving this week, compute what they should fund from THIS pay:
+  //   • Their attributed (funded_by = them) expenses × their pay period in weeks
+  //   • Their share of shared (funded_by = null) expenses, split equally between all income sources
+  //   • Their share of goal contributions (treated as shared)
+  // James-only items aren't deducted from Alex's pay, and vice versa.
+  function payPeriodWeeks(freq: string): number {
+    if (freq === 'weekly') return 1
+    if (freq === 'fortnightly') return 2
+    if (freq === 'monthly') return 4.33
+    if (freq === 'annual') return 52
+    return 1
+  }
+  const N_PAYERS = Math.max(1, income.length)
+
+  interface PayBreakdown {
+    payer: IncomeSource
+    arriving: number
+    attributedWeekly: number
+    sharedWeekly: number
+    goalsWeekly: number
+    attributedPay: number    // attributed × payPeriodWeeks
+    sharedShare: number       // shared × payPeriodWeeks / N
+    goalsShare: number        // goals × payPeriodWeeks / N
+    totalOutflow: number
+    remaining: number
+  }
+
+  const payBreakdowns: PayBreakdown[] = payingThisWeek.map(payer => {
+    const periodWeeks = payPeriodWeeks(payer.frequency)
+    let attributedWeekly = 0
+    let sharedWeekly = 0
+    for (const e of expenses) {
+      const w = cashflow.effective[e.id] ?? 0
+      if (e.funded_by_income_id === payer.id) attributedWeekly += w
+      else if (e.funded_by_income_id == null) sharedWeekly += w
+    }
+    const goalsWeekly = cashflow.goalContributions
+    const arriving = getEffectivePay(payer)
+    const attributedPay = attributedWeekly * periodWeeks
+    const sharedShare = (sharedWeekly * periodWeeks) / N_PAYERS
+    const goalsShare = (goalsWeekly * periodWeeks) / N_PAYERS
+    const totalOutflow = attributedPay + sharedShare + goalsShare
+    return {
+      payer, arriving, attributedWeekly, sharedWeekly, goalsWeekly,
+      attributedPay, sharedShare, goalsShare, totalOutflow,
+      remaining: arriving - totalOutflow,
+    }
+  })
+
+  const totalArriving = payBreakdowns.reduce((s, b) => s + b.arriving, 0)
+  const totalOutflow = payBreakdowns.reduce((s, b) => s + b.totalOutflow, 0)
+  const totalRemaining = totalArriving - totalOutflow
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -293,25 +344,53 @@ export default function WeeklyAllocation() {
             })}
           </div>
 
-          {/* Remaining callout */}
-          {totalSuggested > 0 && (
-            <div className="pl-7 pt-2 border-t border-accent/20">
-              <div className="grid grid-cols-3 gap-3 text-xs">
-                <div>
-                  <p className="text-text-muted text-[10px] uppercase tracking-wider">Arriving</p>
-                  <p className="text-text-primary tabular-nums font-semibold mt-0.5">{formatCurrency(cashArrivingThisWeek)}</p>
-                </div>
-                <div>
-                  <p className="text-text-muted text-[10px] uppercase tracking-wider">Transfers planned</p>
-                  <p className="text-text-primary tabular-nums font-semibold mt-0.5">{formatCurrency(totalSuggested)}</p>
-                </div>
-                <div>
-                  <p className="text-text-muted text-[10px] uppercase tracking-wider">Remaining</p>
-                  <p className={`tabular-nums font-semibold mt-0.5 ${remainingFromPay >= 0 ? 'text-success' : 'text-danger'}`}>
-                    {formatCurrency(remainingFromPay)}
+          {/* Per-pay breakdown — what each pay needs to fund this pay event */}
+          {payBreakdowns.length > 0 && (
+            <div className="pl-7 pt-3 border-t border-accent/20 space-y-3">
+              {payBreakdowns.map(b => (
+                <div key={b.payer.id} className="text-xs">
+                  <p className="text-[10px] uppercase tracking-wider text-text-muted mb-1.5">
+                    {b.payer.person_name}'s pay — math for this pay event
                   </p>
+                  <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 font-mono tabular-nums">
+                    <span className="text-text-secondary">Arriving</span>
+                    <span className="text-text-primary text-right">{formatCurrency(b.arriving)}</span>
+
+                    {b.attributedPay > 0 && (
+                      <>
+                        <span className="text-text-muted pl-3">− {b.payer.person_name}-only expenses ({formatCurrency(b.attributedWeekly)}/wk × {payPeriodWeeks(b.payer.frequency)}wk)</span>
+                        <span className="text-text-secondary text-right">−{formatCurrency(b.attributedPay)}</span>
+                      </>
+                    )}
+                    {b.sharedShare > 0 && (
+                      <>
+                        <span className="text-text-muted pl-3">− Share of joint expenses ({formatCurrency(b.sharedWeekly)}/wk × {payPeriodWeeks(b.payer.frequency)}wk ÷ {N_PAYERS})</span>
+                        <span className="text-text-secondary text-right">−{formatCurrency(b.sharedShare)}</span>
+                      </>
+                    )}
+                    {b.goalsShare > 0 && (
+                      <>
+                        <span className="text-text-muted pl-3">− Share of goal contributions</span>
+                        <span className="text-text-secondary text-right">−{formatCurrency(b.goalsShare)}</span>
+                      </>
+                    )}
+
+                    <span className="text-text-primary font-semibold border-t border-accent/20 pt-1 mt-0.5">Remaining from {b.payer.person_name}'s pay</span>
+                    <span className={`text-right font-semibold border-t border-accent/20 pt-1 mt-0.5 ${b.remaining >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {formatCurrency(b.remaining)}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              ))}
+
+              {payBreakdowns.length > 1 && (
+                <div className="pt-2 border-t border-accent/20 text-xs grid grid-cols-[1fr_auto] gap-x-3 font-mono tabular-nums">
+                  <span className="text-text-primary font-semibold">Total remaining this week</span>
+                  <span className={`text-right font-semibold ${totalRemaining >= 0 ? 'text-success' : 'text-danger'}`}>
+                    {formatCurrency(totalRemaining)}
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>

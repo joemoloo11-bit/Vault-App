@@ -250,7 +250,15 @@ export function dbUpdateExpense(id: number, data: Partial<{
   const entries = Object.entries(data).filter(([, v]) => v !== undefined)
   if (entries.length === 0) return getDb().prepare('SELECT * FROM expenses WHERE id = ?').get(id)
   const fields = entries.map(([k]) => `${k} = ?`).join(', ')
-  const values = [...entries.map(([, v]) => v), id]
+  // better-sqlite3 only binds numbers/strings/bigints/buffers/null. Convert booleans → 0/1
+  // and any other non-bindable type to null defensively.
+  const values = [
+    ...entries.map(([, v]) => {
+      if (typeof v === 'boolean') return v ? 1 : 0
+      return v
+    }),
+    id,
+  ]
   getDb().prepare(`UPDATE expenses SET ${fields} WHERE id = ?`).run(...values)
   return getDb().prepare('SELECT * FROM expenses WHERE id = ?').get(id)
 }
