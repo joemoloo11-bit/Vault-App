@@ -8,6 +8,18 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.10.2',
+    date: '2026-05-09',
+    title: 'Budget Setup Expenses Redesign',
+    highlights: [
+      'Search bar at the top — find any expense by name, category, or account in real time.',
+      'Categories are now collapsible cards with a count and weekly $ total in the header. Largest category is expanded by default; others collapsed to cut the page short.',
+      'Two-column compact grid inside expanded categories — halves the vertical scroll.',
+      'Per-expense card shows weekly amount large on the right, full breakdown below (allocation, buffer, due day, routing chips).',
+      'Edit/Delete buttons fade in on hover, less visual noise.',
+    ],
+  },
+  {
     version: '1.10.1',
     date: '2026-05-09',
     title: 'Tracker UX Fix',

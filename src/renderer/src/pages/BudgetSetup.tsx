@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Pencil, Trash2, User, Wallet, Receipt } from 'lucide-react'
+import { Plus, Pencil, Trash2, User, Wallet, Receipt, Search, ChevronDown, ChevronRight, ArrowRight } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/ui/card'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
@@ -454,11 +454,22 @@ function ExpensesTab({ expenses, accounts, onRefresh }: { expenses: Expense[]; a
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Expense | null>(null)
   const [confirmId, setConfirmId] = useState<number | null>(null)
+  const [search, setSearch] = useState('')
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [didDefaultCollapse, setDidDefaultCollapse] = useState(false)
   const { toast } = useToast()
   const [form, setForm] = useState({
     name: '', amount: '', allocation_amount: '', weekly_extra: '', frequency: 'monthly', due_day: '',
     save_account_id: '', debit_account_id: '', category: 'Bills & Utilities'
   })
+
+  function toggleCategory(cat: string) {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(cat)) next.delete(cat); else next.add(cat)
+      return next
+    })
+  }
 
   function openAdd() {
     setEditing(null)
@@ -516,10 +527,48 @@ function ExpensesTab({ expenses, accounts, onRefresh }: { expenses: Expense[]; a
     onRefresh()
   }
 
+  const q = search.trim().toLowerCase()
+  const filtered = q
+    ? expenses.filter(e =>
+        e.name.toLowerCase().includes(q) ||
+        e.category.toLowerCase().includes(q) ||
+        (e.save_account_name?.toLowerCase().includes(q) ?? false) ||
+        (e.account_name?.toLowerCase().includes(q) ?? false)
+      )
+    : expenses
+
   const grouped = EXPENSE_CATEGORIES.reduce((acc, cat) => {
-    acc[cat] = expenses.filter(e => e.category === cat)
+    acc[cat] = filtered.filter(e => e.category === cat)
     return acc
   }, {} as Record<string, Expense[]>)
+
+  // Categories present (sorted by item count desc — biggest first)
+  const activeCategories = EXPENSE_CATEGORIES
+    .filter(cat => grouped[cat].length > 0)
+    .sort((a, b) => grouped[b].length - grouped[a].length)
+
+  // On first load with data, collapse everything except the biggest category.
+  // Keeps the page short by default; user can toggle as they wish.
+  useEffect(() => {
+    if (didDefaultCollapse) return
+    if (expenses.length === 0) return
+    const cats = EXPENSE_CATEGORIES
+      .filter(cat => expenses.some(e => e.category === cat))
+      .map(cat => ({ cat, count: expenses.filter(e => e.category === cat).length }))
+      .sort((a, b) => b.count - a.count)
+    if (cats.length <= 1) {
+      setDidDefaultCollapse(true)
+      return
+    }
+    setCollapsed(new Set(cats.slice(1).map(c => c.cat)))
+    setDidDefaultCollapse(true)
+  }, [expenses, didDefaultCollapse])
+
+  // When searching, force-expand all categories
+  function isExpanded(cat: string): boolean {
+    if (q) return true
+    return !collapsed.has(cat)
+  }
 
   return (
     <div className="space-y-3">
@@ -591,54 +640,109 @@ function ExpensesTab({ expenses, accounts, onRefresh }: { expenses: Expense[]; a
       {expenses.length === 0 ? (
         <EmptyState icon={Receipt} text="No expenses yet" sub="Add your first expense above" />
       ) : (
-        <div className="space-y-4">
-          {EXPENSE_CATEGORIES.filter(cat => grouped[cat].length > 0).map(cat => (
-            <div key={cat}>
-              <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">{cat}</p>
-              <div className="space-y-2">
-                {grouped[cat].map(exp => (
-                  <Card key={exp.id} className="hover:border-border-subtle transition-colors">
-                    <CardContent className="pt-3 pb-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        {(exp.save_account_color || exp.account_color) && (
-                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: exp.save_account_color ?? exp.account_color }} />
-                        )}
-                        <div>
-                          <p className="text-sm text-text-primary">{exp.name}</p>
-                          <p className="text-xs text-text-muted">
-                            {formatCurrency(exp.amount)} · {exp.frequency}
-                            {exp.allocation_amount && exp.allocation_amount !== exp.amount && (
-                              <span className="text-accent"> · allocating {formatCurrency(exp.allocation_amount)}</span>
-                            )}
-                            {exp.weekly_extra && exp.weekly_extra > 0 && (
-                              <span className="text-accent"> · +{formatCurrency(exp.weekly_extra)}/wk buffer</span>
-                            )}
-                            {exp.due_day && ` · due ${exp.due_day}${['th','st','nd','rd'][((exp.due_day % 100) - 20) % 10] || ['th','st','nd','rd'][exp.due_day % 100] || 'th'}`}
+        <div className="space-y-3">
+          {/* Search bar */}
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={`Search ${expenses.length} expenses…`}
+              className="w-full bg-surface border border-border rounded-lg pl-9 pr-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors"
+            />
+            {q && (
+              <button
+                onClick={() => setSearch('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary text-xs"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {activeCategories.length === 0 ? (
+            <p className="text-center text-sm text-text-muted py-8">No expenses match "{search}".</p>
+          ) : activeCategories.map(cat => {
+            const items = grouped[cat]
+            const weeklyTotal = items.reduce((s, e) => s + toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0), 0)
+            const expanded = isExpanded(cat)
+            return (
+              <div key={cat} className="rounded-xl border border-border bg-surface overflow-hidden">
+                {/* Category header */}
+                <button
+                  onClick={() => toggleCategory(cat)}
+                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface-hover transition-colors group"
+                >
+                  <div className="flex items-center gap-2">
+                    {expanded
+                      ? <ChevronDown size={15} className="text-text-muted group-hover:text-text-secondary" />
+                      : <ChevronRight size={15} className="text-text-muted group-hover:text-text-secondary" />
+                    }
+                    <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">{cat}</span>
+                    <span className="text-[11px] text-text-muted ml-1">{items.length} item{items.length === 1 ? '' : 's'}</span>
+                  </div>
+                  <span className="text-sm font-semibold text-text-primary tabular-nums">
+                    {formatCurrency(weeklyTotal)}<span className="text-[10px] text-text-muted">/wk</span>
+                  </span>
+                </button>
+
+                {/* Expanded grid */}
+                {expanded && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 p-3 pt-0 border-t border-border">
+                    {items.map(exp => {
+                      const dotColor = exp.save_account_color ?? exp.account_color
+                      const dueLabel = exp.due_day
+                        ? `${exp.due_day}${['th','st','nd','rd'][((exp.due_day % 100) - 20) % 10] || ['th','st','nd','rd'][exp.due_day % 100] || 'th'}`
+                        : null
+                      return (
+                        <div
+                          key={exp.id}
+                          className="group bg-surface-2/40 hover:bg-surface-2 border border-border rounded-lg p-3 transition-colors flex items-start gap-3"
+                        >
+                          {dotColor && <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5" style={{ backgroundColor: dotColor }} />}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <p className="text-sm font-medium text-text-primary truncate">{exp.name}</p>
+                              <p className="text-sm font-semibold text-text-primary tabular-nums flex-shrink-0">
+                                {formatCurrency(toWeeklyAmount(exp.allocation_amount ?? exp.amount, exp.frequency) + (exp.weekly_extra ?? 0))}
+                                <span className="text-[10px] text-text-muted">/wk</span>
+                              </p>
+                            </div>
+                            <p className="text-[11px] text-text-muted mt-0.5">
+                              {formatCurrency(exp.amount)} · {exp.frequency}
+                              {dueLabel && ` · due ${dueLabel}`}
+                              {exp.allocation_amount && exp.allocation_amount !== exp.amount && (
+                                <span className="text-accent"> · alloc {formatCurrency(exp.allocation_amount)}</span>
+                              )}
+                              {exp.weekly_extra && exp.weekly_extra > 0 && (
+                                <span className="text-accent"> · +{formatCurrency(exp.weekly_extra)}/wk</span>
+                              )}
+                            </p>
                             {(exp.save_account_name || exp.account_name) && (
-                              <span> · {exp.save_account_name ?? exp.account_name}
+                              <div className="flex items-center gap-1 mt-1 text-[10px] text-text-secondary">
+                                <span className="bg-surface border border-border rounded px-1.5 py-0.5">{exp.save_account_name ?? exp.account_name}</span>
                                 {exp.debit_account_name && exp.debit_account_name !== (exp.save_account_name ?? exp.account_name) && (
-                                  <span className="text-text-secondary"> → {exp.debit_account_name}</span>
+                                  <>
+                                    <ArrowRight size={9} className="text-text-muted" />
+                                    <span className="bg-surface border border-border rounded px-1.5 py-0.5">{exp.debit_account_name}</span>
+                                  </>
                                 )}
-                              </span>
+                              </div>
                             )}
-                          </p>
+                          </div>
+                          <div className="flex gap-0.5 opacity-50 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                            <Button size="icon" variant="ghost" onClick={() => openEdit(exp)}><Pencil size={12} /></Button>
+                            <Button size="icon" variant="ghost" onClick={() => setConfirmId(exp.id)}><Trash2 size={12} className="text-danger" /></Button>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="text-right">
-                          <p className="text-sm font-medium text-text-secondary">{formatCurrency(toWeeklyAmount(exp.amount, exp.frequency))}<span className="text-[10px] text-text-muted">/wk</span></p>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button size="icon" variant="ghost" onClick={() => openEdit(exp)}><Pencil size={13} /></Button>
-                          <Button size="icon" variant="ghost" onClick={() => setConfirmId(exp.id)}><Trash2 size={13} className="text-danger" /></Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                      )
+                    })}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
       <ConfirmDialog

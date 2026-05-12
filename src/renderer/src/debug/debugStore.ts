@@ -83,7 +83,7 @@ export function installDebugListeners() {
   if (installed) return
   installed = true
 
-  addDebugEntry('info', `Session started — Vault v1.10.1`)
+  addDebugEntry('info', `Session started — Vault v1.10.2`)
 
   // ── JS errors ───────────────────────────────────────────────────────────────
   window.addEventListener('error', (e) => {
