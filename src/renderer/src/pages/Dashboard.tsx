@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@renderer/components/u
 import { Badge } from '@renderer/components/ui/badge'
 import { Progress } from '@renderer/components/ui/progress'
 import { formatCurrency, getCurrentWeekStart, getWeekLabel } from '@renderer/lib/utils'
-import { toWeeklyAmount, getNextPayday, daysUntilPayday, getUpcomingPaydays, computeWeeklyCashflow } from '@renderer/types'
+import { toWeeklyAmount, getNextPayday, daysUntilPayday, getUpcomingPaydays, computeWeeklyCashflow, computePayEventContribution } from '@renderer/types'
 import type { Account, IncomeSource, Expense, BalanceLog, Goal, WeeklyAllocation } from '@renderer/types'
 import { format, addDays } from 'date-fns'
 import { Link } from 'react-router-dom'
@@ -324,11 +324,25 @@ export default function Dashboard() {
           })
         })
 
-        // Per-week remaining = pay arriving that week − weekly allocations − weekly goals
-        // (Allocations and goals are constant week-over-week, but pay varies)
-        const constantWeeklyOutflow = weeklyAllocations + activeGoalContributions
+        // Per-week remaining uses the alternating-pay model (same as Weekly Move):
+        // For each pay event arriving that week, compute that person's deduction:
+        //   attributed (funded_by = them) × their pay period in weeks
+        //   + shared × 1 week (one week's worth of joint expenses per pay)
+        //   + goals × 1 week
+        // Then remaining = sum of arrivings − sum of per-pay deductions for the week.
         const weekTotals = weeks.map(w => w.events.reduce((s, e) => s + e.amount, 0))
-        const weekRemainings = weekTotals.map(t => t - constantWeeklyOutflow)
+        const weekRemainings = weeks.map(w => {
+          let totalArriving = 0
+          let totalDeduction = 0
+          for (const event of w.events) {
+            const payer = income.find(i => i.person_name === event.person)
+            if (!payer) continue
+            const contrib = computePayEventContribution(payer, event.amount, expenses, cf)
+            totalArriving += contrib.arriving
+            totalDeduction += contrib.totalOutflow
+          }
+          return totalArriving - totalDeduction
+        })
 
         return (
           <Card>
@@ -377,7 +391,7 @@ export default function Dashboard() {
                 })}
               </div>
               <p className="text-[10px] text-text-muted mt-3">
-                Remaining = pay arriving that week − {formatCurrency(constantWeeklyOutflow)}/wk allocations & goals. Red weeks are short.
+                Remaining uses the alternating-pay model — each pay event covers its person's attributed items (full pay period) + one week of joint expenses & goals. Red weeks are short.
               </p>
             </CardContent>
           </Card>

@@ -8,6 +8,15 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.11.6',
+    date: '2026-05-09',
+    title: 'Pay Calendar Math Aligned',
+    highlights: [
+      'Dashboard Pay Calendar "Remaining" now uses the same alternating-pay model as Weekly Move. Previously it deducted ALL weekly allocations from every week\'s pay, which double-counted shared items. Now per pay event: attributed × pay period + shared × 1 week + goals × 1 week.',
+      'Single source of truth: computePayEventContribution helper in types now drives both Weekly Move breakdowns and Pay Calendar remaining figures.',
+    ],
+  },
+  {
     version: '1.11.5',
     date: '2026-05-09',
     title: 'Alternating-Pay Model + Per-Pay Frequency',

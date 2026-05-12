@@ -373,6 +373,53 @@ export function computeWeeklyCashflow(
   }
 }
 
+// Per-pay-event contribution under the alternating-pay model.
+// Each pay event covers ONE WEEK of shared/joint expenses + goals (alternating
+// pays cover other weeks), plus the FULL pay period worth of items
+// attributed specifically to this person.
+export interface PayEventContribution {
+  payer: IncomeSource
+  arriving: number
+  attributedWeekly: number      // sum of expenses funded_by = payer (weekly equiv)
+  sharedWeekly: number          // sum of expenses with no funded_by (weekly equiv)
+  goalsWeekly: number           // total active goal contributions (weekly)
+  attributedPay: number         // attributedWeekly × payPeriodWeeks (full responsibility)
+  sharedShare: number           // sharedWeekly × 1 week (one week per pay)
+  goalsShare: number            // goalsWeekly × 1 week
+  totalOutflow: number          // sum of the three contributions
+  remaining: number             // arriving − totalOutflow
+}
+
+export function computePayEventContribution(
+  payer: IncomeSource,
+  effectivePay: number,
+  expenses: Expense[],
+  cashflow: CashflowResult
+): PayEventContribution {
+  const periodWeeks = payPeriodWeeks(payer.frequency)
+  let attributedWeekly = 0
+  let sharedWeekly = 0
+  for (const e of expenses) {
+    const w = cashflow.effective[e.id] ?? 0
+    if (w === 0) continue
+    if (e.funded_by_income_id === payer.id) attributedWeekly += w
+    else if (e.funded_by_income_id == null) sharedWeekly += w
+  }
+  const goalsWeekly = cashflow.goalContributions
+  const attributedPay = attributedWeekly * periodWeeks
+  const sharedShare = sharedWeekly * 1
+  const goalsShare = goalsWeekly * 1
+  const totalOutflow = attributedPay + sharedShare + goalsShare
+  return {
+    payer,
+    arriving: effectivePay,
+    attributedWeekly, sharedWeekly, goalsWeekly,
+    attributedPay, sharedShare, goalsShare,
+    totalOutflow,
+    remaining: effectivePay - totalOutflow,
+  }
+}
+
 // Effective weekly $ for a single expense, given context.
 // Falls back to fixed calc if no income/goals provided.
 export function getEffectiveWeekly(exp: Expense, expenses?: Expense[], income?: IncomeSource[], goals?: Goal[]): number {
