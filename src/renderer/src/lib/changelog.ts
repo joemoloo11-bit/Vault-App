@@ -8,6 +8,17 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.11.1',
+    date: '2026-05-09',
+    title: 'Log Balances Dialog Fix',
+    highlights: [
+      'Log Balances dialog now scrolls properly — Save/Cancel buttons stay pinned to the bottom and are always reachable, no matter how many accounts you have.',
+      'Accounts now display in a 2-column grid (single-column on narrow screens). Cuts the modal height in half.',
+      'New footer counter: "X of Y filled" tells you at a glance how many accounts have balance entries before you hit Save.',
+      'All dialogs are now viewport-bounded (max-height 90vh) — no more off-screen content for any modal.',
+    ],
+  },
+  {
     version: '1.11.0',
     date: '2026-05-09',
     title: 'Percentage Allocations + Cashflow Clarity',

@@ -288,14 +288,18 @@ export default function AccountTracker() {
             <DialogTrigger asChild>
               <Button size="sm" onClick={openQuickLog}><Plus size={14} /> Log Balances</Button>
             </DialogTrigger>
-            <DialogContent title="Log Account Balances" description="Update all your account balances in one go. Leave blank to skip an account.">
-              <div className="space-y-3">
+            <DialogContent
+              title="Log Account Balances"
+              description={`Update balances for ${accounts.length} accounts. Leave blank to skip. Filled-in count appears in the footer.`}
+              className="max-w-4xl"
+            >
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {accounts.map(acc => (
-                  <div key={acc.id} className="flex items-center gap-3 p-3 rounded-lg border border-border bg-surface-2">
-                    <div className="w-1 h-10 rounded-full flex-shrink-0" style={{ backgroundColor: acc.color }} />
+                  <div key={acc.id} className="flex items-center gap-2 p-2.5 rounded-lg border border-border bg-surface-2">
+                    <div className="w-1 h-9 rounded-full flex-shrink-0" style={{ backgroundColor: acc.color }} />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-text-primary mb-1.5">{acc.name}</p>
-                      <div className="flex gap-2">
+                      <p className="text-xs font-medium text-text-primary truncate mb-1">{acc.name}</p>
+                      <div className="flex gap-1.5">
                         <Input
                           type="number"
                           prefix="$"
@@ -314,10 +318,15 @@ export default function AccountTracker() {
                     </div>
                   </div>
                 ))}
-                <div className="flex gap-2 pt-2">
-                  <Button onClick={handleQuickLogSave} className="flex-1">Save All Balances</Button>
-                  <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-                </div>
+              </div>
+
+              {/* Sticky footer — never scrolls off */}
+              <div className="sticky bottom-0 -mx-6 -mb-6 mt-4 px-6 py-3 bg-surface border-t border-border flex items-center gap-2">
+                <p className="text-xs text-text-muted flex-shrink-0 mr-auto">
+                  {Object.values(quickBalances).filter(v => v.balance !== '').length} of {accounts.length} filled
+                </p>
+                <DialogClose asChild><Button variant="outline" size="sm">Cancel</Button></DialogClose>
+                <Button onClick={handleQuickLogSave} size="sm">Save All Balances</Button>
               </div>
             </DialogContent>
           </Dialog>

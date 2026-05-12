@@ -33,7 +33,7 @@ function DialogContent({
       <DialogPrimitive.Content
         className={cn(
           'fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2',
-          'w-full max-w-lg rounded-xl bg-surface border border-border shadow-2xl',
+          'w-full max-w-lg max-h-[90vh] flex flex-col rounded-xl bg-surface border border-border shadow-2xl',
           'data-[state=open]:animate-dialog-in',
           'focus:outline-none',
           className
@@ -41,7 +41,7 @@ function DialogContent({
         {...props}
       >
         {(title || description) && (
-          <div className="flex items-start justify-between p-6 pb-4 border-b border-border">
+          <div className="flex items-start justify-between p-6 pb-4 border-b border-border flex-shrink-0">
             <div>
               {title && (
                 <DialogPrimitive.Title className="text-base font-semibold text-text-primary">
@@ -59,7 +59,7 @@ function DialogContent({
             </DialogClose>
           </div>
         )}
-        <div className="p-6">{children}</div>
+        <div className="p-6 overflow-y-auto flex-1 min-h-0">{children}</div>
       </DialogPrimitive.Content>
     </DialogPortal>
   )
