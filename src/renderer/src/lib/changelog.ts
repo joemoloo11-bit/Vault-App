@@ -8,6 +8,18 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.11.5',
+    date: '2026-05-09',
+    title: 'Alternating-Pay Model + Per-Pay Frequency',
+    highlights: [
+      'Weekly Move math rebuilt to match your actual mental model: each pay event covers ONE WEEK of joint/shared expenses (since pays alternate — yours funds this week, your partner\'s funds next week).',
+      'Previously the math split shared items by ÷ N payers across the full pay period; now it\'s just × 1 week per pay event. Cleaner and matches your "this week\'s bills" framing.',
+      'Person-only items still cover the full pay period (e.g. Alex Gym from Alex\'s pay covers 2 weeks of gym).',
+      'New "Per pay" frequency for expenses — for items charged once per pay cycle of a specific person. E.g. Alex Gym $148 "per pay" = $148 from each of Alex\'s pays. Requires Funded by to be set.',
+      'All amounts flow through the same single source of truth (computeWeeklyCashflow) so Dashboard, Budget Setup, Tracker, and Weekly Move all stay in sync.',
+    ],
+  },
+  {
     version: '1.11.4',
     date: '2026-05-09',
     title: 'Pay Breakdown Click-Through',

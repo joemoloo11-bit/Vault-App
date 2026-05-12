@@ -6,7 +6,7 @@ import { Input } from '@renderer/components/ui/input'
 import { useToast } from '@renderer/components/ui/toast'
 import { Dialog, DialogContent, DialogClose } from '@renderer/components/ui/dialog'
 import { formatCurrency, getCurrentWeekStart, getWeekLabel } from '@renderer/lib/utils'
-import { isPayWeek, computeWeeklyCashflow } from '@renderer/types'
+import { isPayWeek, computeWeeklyCashflow, payPeriodWeeks } from '@renderer/types'
 import type { Account, IncomeSource, Expense, Transfer, BalanceLog, PayOverride, Goal } from '@renderer/types'
 import { addDays, format, subDays } from 'date-fns'
 
@@ -171,18 +171,16 @@ export default function WeeklyAllocation() {
   const cashArrivingThisWeek = payingThisWeek.reduce((s, p) => s + getEffectivePay(p), 0)
 
   // ── Per-pay-event attribution ───────────────────────────────────────────
-  // For each payer arriving this week, compute what they should fund from THIS pay:
-  //   • Their attributed (funded_by = them) expenses × their pay period in weeks
-  //   • Their share of shared (funded_by = null) expenses, split equally between all income sources
-  //   • Their share of goal contributions (treated as shared)
-  // James-only items aren't deducted from Alex's pay, and vice versa.
-  function payPeriodWeeks(freq: string): number {
-    if (freq === 'weekly') return 1
-    if (freq === 'fortnightly') return 2
-    if (freq === 'monthly') return 4.33
-    if (freq === 'annual') return 52
-    return 1
-  }
+  // Pay events alternate (e.g. James's fortnight, then Alex's fortnight). Each pay
+  // covers ONE WEEK of shared/joint expenses (since the other week is funded by the
+  // other person's next pay). Person-specific items are fully funded by that person
+  // — they cover their full pay period (2 weeks for fortnightly etc).
+  //
+  // Per pay event:
+  //   • Their attributed (funded_by = them) items × their pay period in weeks
+  //   • 1 week of shared (funded_by = null) items — this pay covers this week's worth
+  //   • 1 week of goal contributions (treated as shared)
+  //   • James-only items don't deduct from Alex's pay, and vice versa.
   const N_PAYERS = Math.max(1, income.length)
 
   interface PayItemLine {
@@ -225,18 +223,21 @@ export default function WeeklyAllocation() {
         attributedItems.push({ expense: e, weekly: w, contribution: w * periodWeeks })
         attributedWeekly += w
       } else if (e.funded_by_income_id == null) {
-        sharedItems.push({ expense: e, weekly: w, contribution: (w * periodWeeks) / N_PAYERS })
+        // One week of this shared expense is on this pay event
+        sharedItems.push({ expense: e, weekly: w, contribution: w * 1 })
         sharedWeekly += w
       }
     }
     const goalItems: PayGoalLine[] = goals
       .filter(g => g.status === 'active' && g.weekly_contribution > 0)
-      .map(g => ({ goal: g, weekly: g.weekly_contribution, contribution: (g.weekly_contribution * periodWeeks) / N_PAYERS }))
+      .map(g => ({ goal: g, weekly: g.weekly_contribution, contribution: g.weekly_contribution * 1 }))
     const goalsWeekly = cashflow.goalContributions
     const arriving = getEffectivePay(payer)
     const attributedPay = attributedWeekly * periodWeeks
-    const sharedShare = (sharedWeekly * periodWeeks) / N_PAYERS
-    const goalsShare = (goalsWeekly * periodWeeks) / N_PAYERS
+    // Each pay event covers ONE WEEK of shared expenses (alternating-pay model).
+    // Other weeks of shared are covered by the other person's next pay.
+    const sharedShare = sharedWeekly * 1
+    const goalsShare = goalsWeekly * 1
     const totalOutflow = attributedPay + sharedShare + goalsShare
     // Sort items by contribution descending so the biggest line items appear first
     attributedItems.sort((a, b) => b.contribution - a.contribution)
@@ -405,13 +406,13 @@ export default function WeeklyAllocation() {
                     )}
                     {b.sharedShare > 0 && (
                       <>
-                        <span className="text-text-muted pl-3">− Share of joint expenses ({b.sharedItems.length} item{b.sharedItems.length === 1 ? '' : 's'} × {payPeriodWeeks(b.payer.frequency)}wk ÷ {N_PAYERS})</span>
+                        <span className="text-text-muted pl-3">− This week's joint expenses ({b.sharedItems.length} item{b.sharedItems.length === 1 ? '' : 's'} × 1wk)</span>
                         <span className="text-text-secondary text-right">−{formatCurrency(b.sharedShare)}</span>
                       </>
                     )}
                     {b.goalsShare > 0 && (
                       <>
-                        <span className="text-text-muted pl-3">− Share of goal contributions ({b.goalItems.length} goal{b.goalItems.length === 1 ? '' : 's'})</span>
+                        <span className="text-text-muted pl-3">− This week's goal contributions ({b.goalItems.length} goal{b.goalItems.length === 1 ? '' : 's'})</span>
                         <span className="text-text-secondary text-right">−{formatCurrency(b.goalsShare)}</span>
                       </>
                     )}
@@ -649,14 +650,14 @@ export default function WeeklyAllocation() {
                   <section>
                     <div className="flex items-baseline justify-between mb-2">
                       <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                        Joint expenses ({b.payer.person_name}'s share)
+                        This week's joint expenses
                       </h3>
                       <span className="text-sm font-semibold text-text-primary tabular-nums">
                         {formatCurrency(b.sharedShare)}
                       </span>
                     </div>
                     <p className="text-[11px] text-text-muted mb-2">
-                      Each item: weekly × {b.periodWeeks} weeks ÷ {N_PAYERS} payers = {b.payer.person_name}'s share.
+                      Each item: weekly amount × 1 week. {b.payer.person_name}'s pay covers this week; the alternating pay covers the other weeks.
                     </p>
                     <div className="space-y-1">
                       {b.sharedItems.map(line => (
@@ -666,8 +667,8 @@ export default function WeeklyAllocation() {
                             <p className="text-[10px] text-text-muted">
                               {line.expense.is_percentage
                                 ? `${line.expense.percentage_value}% of pay`
-                                : `${formatCurrency(line.expense.amount)} ${line.expense.frequency}`}
-                              {' · '}{formatCurrency(line.weekly)}/wk full · {formatCurrency(line.weekly / N_PAYERS)}/wk share
+                                : `${formatCurrency(line.expense.amount)} ${line.expense.frequency.replace('_', ' ')}`}
+                              {' · '}{formatCurrency(line.weekly)}/wk
                             </p>
                           </div>
                           <span className="text-text-primary tabular-nums font-semibold">{formatCurrency(line.contribution)}</span>
@@ -682,7 +683,7 @@ export default function WeeklyAllocation() {
                   <section>
                     <div className="flex items-baseline justify-between mb-2">
                       <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                        Goal contributions ({b.payer.person_name}'s share)
+                        This week's goal contributions
                       </h3>
                       <span className="text-sm font-semibold text-text-primary tabular-nums">
                         {formatCurrency(b.goalsShare)}
@@ -693,7 +694,7 @@ export default function WeeklyAllocation() {
                         <div key={line.goal.id} className="flex items-center justify-between bg-surface-2/40 border border-border rounded-lg px-3 py-2 text-xs">
                           <div className="flex-1 min-w-0">
                             <p className="text-text-primary truncate">{line.goal.name}</p>
-                            <p className="text-[10px] text-text-muted">{formatCurrency(line.weekly)}/wk full · {formatCurrency(line.weekly / N_PAYERS)}/wk share</p>
+                            <p className="text-[10px] text-text-muted">{formatCurrency(line.weekly)}/wk full</p>
                           </div>
                           <span className="text-text-primary tabular-nums font-semibold">{formatCurrency(line.contribution)}</span>
                         </div>

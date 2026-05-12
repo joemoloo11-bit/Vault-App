@@ -25,6 +25,7 @@ const EXPENSE_FREQ_OPTIONS = [
   ...FREQ_OPTIONS,
   { value: 'quarterly', label: 'Quarterly' },
   { value: 'annual', label: 'Annual' },
+  { value: 'per_pay', label: 'Per pay (requires Funded by)' },
 ]
 
 export default function BudgetSetup() {
@@ -818,7 +819,7 @@ function ExpensesTab({ expenses, accounts, income, effective, onRefresh }: { exp
                                 </>
                               ) : (
                                 <>
-                                  {formatCurrency(exp.amount)} · {exp.frequency}
+                                  {formatCurrency(exp.amount)} · {exp.frequency.replace('_', ' ')}
                                   {dueLabel && ` · due ${dueLabel}`}
                                   {exp.allocation_amount && exp.allocation_amount !== exp.amount && (
                                     <span className="text-accent"> · alloc {formatCurrency(exp.allocation_amount)}</span>

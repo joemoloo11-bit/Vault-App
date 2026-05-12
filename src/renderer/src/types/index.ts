@@ -57,7 +57,7 @@ export interface Expense {
   amount: number
   allocation_amount?: number
   weekly_extra?: number
-  frequency: 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'annual'
+  frequency: 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'annual' | 'per_pay'
   due_day?: number
   account_id?: number
   save_account_id?: number
@@ -84,7 +84,7 @@ export interface ExpenseInput {
   amount: number
   allocation_amount?: number
   weekly_extra?: number
-  frequency: 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'annual'
+  frequency: 'weekly' | 'fortnightly' | 'monthly' | 'quarterly' | 'annual' | 'per_pay'
   due_day?: number
   account_id?: number
   save_account_id?: number
@@ -233,16 +233,24 @@ export const ACCOUNT_COLORS = [
   '#84CC16', // lime
 ] as const
 
-// Converts any expense frequency to a weekly equivalent amount
-export function toWeeklyAmount(amount: number, frequency: string): number {
+// Pay/expense frequency in weeks (used for amortization)
+export function payPeriodWeeks(frequency: string): number {
   switch (frequency) {
-    case 'weekly': return amount
-    case 'fortnightly': return amount / 2
-    case 'monthly': return amount / 4.33
-    case 'quarterly': return amount / 13
-    case 'annual': return amount / 52
-    default: return amount
+    case 'weekly': return 1
+    case 'fortnightly': return 2
+    case 'monthly': return 4.33
+    case 'quarterly': return 13
+    case 'annual': return 52
+    default: return 1
   }
+}
+
+// Converts any expense frequency to a weekly equivalent amount.
+// 'per_pay' returns 0 because it depends on which person's pay — use
+// getExpenseEffectiveWeekly or computeWeeklyCashflow for proper handling.
+export function toWeeklyAmount(amount: number, frequency: string): number {
+  if (frequency === 'per_pay') return 0
+  return amount / payPeriodWeeks(frequency)
 }
 
 // Converts any income frequency to a weekly equivalent amount
@@ -318,7 +326,15 @@ export function computeWeeklyCashflow(
   const pctExpenses = expenses.filter(e => !!e.is_percentage)
   let fixedAllocations = 0
   for (const e of fixedExpenses) {
-    const wk = toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0)
+    let wk: number
+    if (e.frequency === 'per_pay') {
+      // Amount is per pay event of the funded_by person. Convert to weekly using their period.
+      const payer = e.funded_by_income_id ? incomeById[e.funded_by_income_id] : null
+      const periodWeeks = payer ? payPeriodWeeks(payer.frequency) : 2
+      wk = (e.allocation_amount ?? e.amount) / periodWeeks + (e.weekly_extra ?? 0)
+    } else {
+      wk = toWeeklyAmount(e.allocation_amount ?? e.amount, e.frequency) + (e.weekly_extra ?? 0)
+    }
     effective[e.id] = wk
     fixedAllocations += wk
   }
