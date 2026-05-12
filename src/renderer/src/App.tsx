@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/layout/Layout'
 import Dashboard from './pages/Dashboard'
 import BudgetSetup from './pages/BudgetSetup'
@@ -35,21 +36,25 @@ export default function App() {
   }, [navigate])
 
   return (
-    <ToastProvider>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/setup" element={<BudgetSetup />} />
-          <Route path="/weekly" element={<WeeklyAllocation />} />
-          <Route path="/tracker" element={<AccountTracker />} />
-          <Route path="/goals" element={<Goals />} />
-          <Route path="/charts" element={<Charts />} />
-          <Route path="/export" element={<Export />} />
-          <Route path="/testing" element={<Testing />} />
-        </Routes>
-      </Layout>
-      <DebugPanel visible={debugVisible} onClose={() => setDebugVisible(false)} />
-    </ToastProvider>
+    <ErrorBoundary>
+      <ToastProvider>
+        <Layout>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/setup" element={<BudgetSetup />} />
+              <Route path="/weekly" element={<WeeklyAllocation />} />
+              <Route path="/tracker" element={<AccountTracker />} />
+              <Route path="/goals" element={<Goals />} />
+              <Route path="/charts" element={<Charts />} />
+              <Route path="/export" element={<Export />} />
+              <Route path="/testing" element={<Testing />} />
+            </Routes>
+          </ErrorBoundary>
+        </Layout>
+        <DebugPanel visible={debugVisible} onClose={() => setDebugVisible(false)} />
+      </ToastProvider>
+    </ErrorBoundary>
   )
 }

@@ -8,6 +8,16 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.11.2',
+    date: '2026-05-09',
+    title: 'Crash Diagnostic — ErrorBoundary',
+    highlights: [
+      'Added a top-level ErrorBoundary. If any page crashes, instead of a blank screen you\'ll now see the error name, message, and stack trace — screenshot that and we can fix it immediately.',
+      'Second-level ErrorBoundary inside the Layout so individual page crashes don\'t take down the whole shell (sidebar/title bar still render).',
+      'No feature changes — this release exists purely to expose what\'s been causing the blank-screen issue on v1.11.x.',
+    ],
+  },
+  {
     version: '1.11.1',
     date: '2026-05-09',
     title: 'Log Balances Dialog Fix',

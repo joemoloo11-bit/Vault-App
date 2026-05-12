@@ -74,7 +74,7 @@ export default function Dashboard() {
     load()
   }, [])
 
-  const { accounts, income, expenses, latestLogs, goals, weeklyAllocations } = data
+  const { accounts, income, expenses, latestLogs, goals, weeklyAllocations: allocationRecords } = data
 
   const cf = computeWeeklyCashflow(expenses, income, goals as Goal[])
   const weeklyIncome = cf.weeklyIncome
@@ -233,7 +233,7 @@ export default function Dashboard() {
         })
 
         // 2. Allocations not funded
-        const fundedCount = weeklyAllocations.filter(a => a.funded === 1).length
+        const fundedCount = allocationRecords.filter(a => a.funded === 1).length
         if (accounts.length > 0 && fundedCount < accounts.length) {
           items.push({
             label: `Move money to envelopes — ${fundedCount}/${accounts.length} done`,
