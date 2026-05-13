@@ -8,6 +8,18 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.12.1',
+    date: '2026-05-11',
+    title: 'Click-to-Fill Accumulators + Polish',
+    highlights: [
+      'Accumulating envelopes now have a "Click to fill" workflow. The card shows the suggested fill amount (editable) and a Fill button. Click → balance increases by that amount AND the card marks as filled this week with a green check.',
+      'Until you click, the envelope is NOT marked as committed (matches the routes workflow — both require user confirmation before treating the money as in the account).',
+      'Fills are tracked separately from transfers and don\'t count toward the "transfers done" tally. Undo button to reverse if you click by mistake.',
+      'Sticky pay banner: now solid background (was transparent and unreadable when scrolling over cards).',
+      'Pay breakdown font matches the rest of the page (was monospace, now Inter like everywhere else).',
+    ],
+  },
+  {
     version: '1.12.0',
     date: '2026-05-11',
     title: 'Weekly Move — Unified Envelope Cards',

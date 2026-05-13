@@ -23,6 +23,7 @@ export default function WeeklyAllocation() {
   const [payDraft, setPayDraft] = useState('')
   const [detailPayerId, setDetailPayerId] = useState<number | null>(null)
   const [drafts, setDrafts] = useState<Record<string, string>>({}) // key: `${from}-${to}` → entered amount string
+  const [fillDrafts, setFillDrafts] = useState<Record<number, string>>({}) // key: envelope.id → entered fill amount
   const { toast } = useToast()
 
   const isCurrentWeek = weekStart === getCurrentWeekStart()
@@ -327,6 +328,37 @@ export default function WeeklyAllocation() {
     loadWeekData()
   }
 
+  // Confirm an envelope was filled by auto-split this week.
+  // Recorded as a self-transfer (from = to = envelope) plus a balance log update.
+  async function handleFillEnvelope(envelope: Account, amount: number, currentBalance: number) {
+    if (!amount || amount <= 0) {
+      toast('Enter a fill amount greater than $0', 'danger')
+      return
+    }
+    await (window.api as any).transfers.save({
+      from_account_id: envelope.id,
+      to_account_id: envelope.id,
+      amount,
+      week_start: weekStart,
+      notes: 'Auto-split fill confirmed',
+    })
+    await window.api.balances.save({
+      account_id: envelope.id,
+      balance: currentBalance + amount,
+      notes: `Auto-split fill +${formatCurrency(amount)}`,
+    })
+    toast(`${envelope.name} filled +${formatCurrency(amount)}`)
+    setFillDrafts(d => { const next = { ...d }; delete next[envelope.id]; return next })
+    await loadBase()
+    await loadWeekData()
+  }
+
+  async function handleUndoFill(transferId: number) {
+    await (window.api as any).transfers.delete(transferId)
+    toast('Fill undone — balance log still recorded; adjust manually if needed', 'danger')
+    loadWeekData()
+  }
+
   function prevWeek() {
     setWeekStart(format(subDays(new Date(weekStart + 'T00:00:00'), 7), 'yyyy-MM-dd'))
   }
@@ -356,7 +388,7 @@ export default function WeeklyAllocation() {
 
       {/* Pay context — sticky so the summary stays visible as you log transfers */}
       {payingThisWeek.length > 0 ? (
-        <div className="sticky top-0 z-10 bg-accent/10 backdrop-blur-sm border border-accent/30 rounded-lg p-4 space-y-3 shadow-lg">
+        <div className="sticky top-0 z-20 bg-surface border border-accent/40 rounded-lg p-4 space-y-3 shadow-xl">
           <div className="flex items-start gap-3">
             <DollarSign size={18} className="text-accent flex-shrink-0 mt-0.5" />
             <div className="flex-1">
@@ -440,7 +472,7 @@ export default function WeeklyAllocation() {
                       Click for item-by-item breakdown →
                     </p>
                   </div>
-                  <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 font-mono tabular-nums">
+                  <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 tabular-nums">
                     <span className="text-text-secondary">Arriving</span>
                     <span className="text-text-primary text-right">{formatCurrency(b.arriving)}</span>
 
@@ -484,7 +516,7 @@ export default function WeeklyAllocation() {
               ))}
 
               {payBreakdowns.length > 1 && (
-                <div className="pt-2 border-t border-accent/20 text-xs grid grid-cols-[1fr_auto] gap-x-3 font-mono tabular-nums">
+                <div className="pt-2 border-t border-accent/20 text-xs grid grid-cols-[1fr_auto] gap-x-3 tabular-nums">
                   <span className="text-text-primary font-semibold">Total remaining this week</span>
                   <span className={`text-right font-semibold ${totalRemaining >= 0 ? 'text-success' : 'text-danger'}`}>
                     {formatCurrency(totalRemaining)}
@@ -618,17 +650,54 @@ export default function WeeklyAllocation() {
                           </div>
                         )}
                       </>
-                    ) : (
-                      <div className="flex items-start gap-2 text-xs">
-                        <Coffee size={14} className="text-text-muted mt-0.5 flex-shrink-0" />
-                        <div>
-                          <p className="text-text-primary">Auto-handled · no manual transfer</p>
-                          <p className="text-[10px] text-text-muted mt-0.5">
-                            Funded by auto-split. Money stays in this envelope until spent direct or builds up over time.
-                          </p>
+                    ) : (() => {
+                      // Detect if envelope has been filled this week (self-transfer)
+                      const fillTransfer = transfers.find(t =>
+                        t.from_account_id === card.envelope.id &&
+                        t.to_account_id === card.envelope.id
+                      )
+                      const fillDraft = fillDrafts[card.envelope.id] ?? ''
+                      if (fillTransfer) {
+                        return (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-sm text-success">
+                              <CheckCircle2 size={16} />
+                              <span>Filled +{formatCurrency(fillTransfer.amount)} this week</span>
+                            </div>
+                            <button
+                              onClick={() => handleUndoFill(fillTransfer.id)}
+                              className="text-[10px] text-text-muted hover:text-danger transition-colors"
+                            >
+                              Undo fill
+                            </button>
+                          </div>
+                        )
+                      }
+                      return (
+                        <div className="space-y-2">
+                          <div className="flex items-baseline justify-between">
+                            <p className="text-xs text-text-secondary">Click to fill for the week</p>
+                            <p className="text-xs text-text-muted">Suggested {formatCurrency(card.weeklyFill)}</p>
+                          </div>
+                          <div className="flex items-stretch gap-2">
+                            <Input
+                              type="number"
+                              prefix="$"
+                              placeholder={card.weeklyFill.toFixed(2)}
+                              value={fillDraft}
+                              onChange={e => setFillDrafts(d => ({ ...d, [card.envelope.id]: e.target.value }))}
+                              className="flex-1"
+                            />
+                            <Button
+                              onClick={() => handleFillEnvelope(card.envelope, parseFloat(fillDraft) || card.weeklyFill, card.balance)}
+                            >
+                              Fill
+                            </Button>
+                          </div>
+                          <p className="text-[10px] text-text-muted">Confirms auto-split arrived and adds this amount to the balance.</p>
                         </div>
-                      </div>
-                    )}
+                      )
+                    })()}
 
                     {/* Bills list (compact, always shown) */}
                     <div className="mt-3 pt-3 border-t border-border">
@@ -800,7 +869,7 @@ export default function WeeklyAllocation() {
                 )}
 
                 {/* Totals */}
-                <div className="pt-3 border-t border-border space-y-1 text-sm font-mono tabular-nums">
+                <div className="pt-3 border-t border-border space-y-1 text-sm tabular-nums">
                   <div className="flex justify-between">
                     <span className="text-text-secondary">Arriving</span>
                     <span className="text-text-primary">{formatCurrency(b.arriving)}</span>
