@@ -8,6 +8,17 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.13.1',
+    date: '2026-05-13',
+    title: 'Pay Range Drives Underfunded Detection',
+    highlights: [
+      'The pay range you set on income sources now flows through to shortfall flags. Weeks no longer false-fire as underfunded when your high-end pay would cover them.',
+      'Pay Calendar: a week is only flagged red (Shortfall) when even the maximum pay can\'t cover it. If only the low-end falls short, it shows amber (Maybe lean) instead — much more accurate for shift workers.',
+      'Each week\'s "Remaining" now shows the low–high range under the average so you can see the actual planning band, not just one number.',
+      'Weekly Move pay banner: shows the pay range next to each payer\'s average so it\'s clear at a glance what variation to expect this pay.',
+    ],
+  },
+  {
     version: '1.13.0',
     date: '2026-05-11',
     title: 'Pay Range for Variable Income',

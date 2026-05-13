@@ -444,6 +444,13 @@ export default function WeeklyAllocation() {
                   ) : (
                     <>
                       <span className="text-text-primary tabular-nums font-medium">{formatCurrency(effective)}</span>
+                      {!isOverridden && (src.min_amount != null || src.max_amount != null) && (
+                        <span className="text-[10px] text-accent/80 tabular-nums">
+                          range: {src.min_amount != null ? formatCurrency(src.min_amount) : '—'}
+                          {'–'}
+                          {src.max_amount != null ? formatCurrency(src.max_amount) : '—'}
+                        </span>
+                      )}
                       {isOverridden && (
                         <span className="text-[10px] text-accent bg-accent/10 border border-accent/30 rounded px-1.5 py-0.5">
                           adjusted from {formatCurrency(src.amount)}

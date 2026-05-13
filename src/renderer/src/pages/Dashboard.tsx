@@ -330,18 +330,27 @@ export default function Dashboard() {
         //   + shared × 1 week (one week's worth of joint expenses per pay)
         //   + goals × 1 week
         // Then remaining = sum of arrivings − sum of per-pay deductions for the week.
+        // For variable pay (min/max set), compute low/avg/high so the "shortfall"
+        // flag only fires if even MAX pay can't cover the outflow.
         const weekTotals = weeks.map(w => w.events.reduce((s, e) => s + e.amount, 0))
-        const weekRemainings = weeks.map(w => {
-          let totalArriving = 0
-          let totalDeduction = 0
+        type WeekMath = { low: number; avg: number; high: number; hasRange: boolean }
+        const weekRemainings: WeekMath[] = weeks.map(w => {
+          let low = 0, avg = 0, high = 0
+          let hasRange = false
           for (const event of w.events) {
             const payer = income.find(i => i.person_name === event.person)
             if (!payer) continue
-            const contrib = computePayEventContribution(payer, event.amount, expenses, cf)
-            totalArriving += contrib.arriving
-            totalDeduction += contrib.totalOutflow
+            const avgContrib = computePayEventContribution(payer, event.amount, expenses, cf)
+            avg += avgContrib.arriving - avgContrib.totalOutflow
+            const minPay = payer.min_amount ?? event.amount
+            const maxPay = payer.max_amount ?? event.amount
+            if (minPay !== event.amount || maxPay !== event.amount) hasRange = true
+            const minContrib = computePayEventContribution(payer, minPay, expenses, cf)
+            const maxContrib = computePayEventContribution(payer, maxPay, expenses, cf)
+            low += minContrib.arriving - minContrib.totalOutflow
+            high += maxContrib.arriving - maxContrib.totalOutflow
           }
-          return totalArriving - totalDeduction
+          return { low, avg, high, hasRange }
         })
 
         return (
@@ -355,12 +364,18 @@ export default function Dashboard() {
                 {weeks.map((w, i) => {
                   const remaining = weekRemainings[i]
                   const isEmpty = w.events.length === 0
-                  const isShortfall = !isEmpty && remaining < 0
+                  // Shortfall: even the HIGH end of the pay range can't cover outflow.
+                  // (If only the low end can't, but the high end can, it's a maybe-lean week,
+                  // not a definite shortfall — show amber instead of red.)
+                  const isShortfall = !isEmpty && remaining.high < 0
+                  const isMaybeLean = !isEmpty && !isShortfall && remaining.low < 0
                   const baseClasses = isEmpty
                     ? 'border-border bg-surface-2/30 text-text-muted'
                     : isShortfall
                       ? 'border-danger/40 bg-danger/5'
-                      : 'border-accent/30 bg-accent/5'
+                      : isMaybeLean
+                        ? 'border-warning/40 bg-warning/5'
+                        : 'border-accent/30 bg-accent/5'
                   return (
                     <div key={i} className={`rounded-lg border p-2 min-h-[100px] flex flex-col ${baseClasses}`}>
                       <p className="text-[10px] uppercase tracking-wider text-text-muted">
@@ -392,9 +407,14 @@ export default function Dashboard() {
                       {!isEmpty && (
                         <div className="mt-1.5 pt-1.5 border-t border-border/50">
                           <p className="text-[9px] uppercase tracking-wider text-text-muted">Remaining</p>
-                          <p className={`text-[11px] font-semibold tabular-nums ${remaining >= 0 ? 'text-success' : 'text-danger'}`}>
-                            {formatCurrency(remaining)}
+                          <p className={`text-[11px] font-semibold tabular-nums ${remaining.avg >= 0 ? 'text-success' : 'text-danger'}`}>
+                            {formatCurrency(remaining.avg)}
                           </p>
+                          {remaining.hasRange && (
+                            <p className="text-[9px] text-text-muted tabular-nums">
+                              {formatCurrency(remaining.low)}–{formatCurrency(remaining.high)}
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
