@@ -8,6 +8,18 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.12.2',
+    date: '2026-05-11',
+    title: 'Pay-Event-Aware Fill Amounts',
+    highlights: [
+      'Envelope card "fill this pay" amounts now reflect what each pay event actually deposits via auto-split — not the weekly average.',
+      'For Alex-only envelopes on Alex\'s pay week: shows full fortnight amount (e.g. Alex Gym $74, not $37/wk × 1).',
+      'For James-only envelopes on Alex\'s pay week: shows $0 (no fill from her pay).',
+      'For shared envelopes: shows 1 week\'s worth per pay event (since both pays alternate covering shared bills).',
+      'Card subheader switches between "Auto-split this pay" (when someone is paying this week) and "Avg per week" (off-pay weeks) so the context is clear.',
+    ],
+  },
+  {
     version: '1.12.1',
     date: '2026-05-11',
     title: 'Click-to-Fill Accumulators + Polish',

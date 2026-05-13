@@ -114,6 +114,31 @@ export default function WeeklyAllocation() {
 
   const cashflow = useMemo(() => computeWeeklyCashflow(expenses, income, goals), [expenses, income, goals])
 
+  // ── Pay context (computed before envelopeCards so fill math can use it) ────
+  const payingThisWeek = income.filter(s =>
+    s.payday_reference && isPayWeek(s.payday_reference, s.frequency, weekStart)
+  )
+  const cashArrivingThisWeek = payingThisWeek.reduce((s, p) => s + getEffectivePay(p), 0)
+
+  // For a set of bills, how much does THIS week's pay events deposit into the envelope?
+  // (Auto-split only happens on a person's pay event. Their attributed items get full
+  // pay-period coverage; shared items get one week's worth per pay.)
+  function fillFromPayersThisWeek(bills: Expense[]): number {
+    if (payingThisWeek.length === 0) {
+      // No pay this week — fall back to weekly equivalent for display
+      return bills.reduce((s, b) => s + (cashflow.effective[b.id] ?? 0), 0)
+    }
+    return payingThisWeek.reduce((sum, payer) => {
+      const period = payPeriodWeeks(payer.frequency)
+      return sum + bills.reduce((billSum, b) => {
+        const w = cashflow.effective[b.id] ?? 0
+        if (b.funded_by_income_id === payer.id) return billSum + w * period
+        if (b.funded_by_income_id == null) return billSum + w * 1
+        return billSum  // funded by someone else, not this payer's responsibility
+      }, 0)
+    }, 0)
+  }
+
   const envelopeCards = useMemo<EnvelopeCard[]>(() => {
     // Group bills by envelope (save_account_id, with fallback to account_id)
     const byEnvelope = new Map<number, Expense[]>()
@@ -128,7 +153,6 @@ export default function WeeklyAllocation() {
       const envelope = accounts.find(a => a.id === envelopeId)
       if (!envelope) continue
       const log = latestLogs.find(l => l.account_id === envelope.id)
-      const weeklyFill = bills.reduce((s, b) => s + (cashflow.effective[b.id] ?? 0), 0)
       const balance = log?.balance ?? 0
 
       // Determine destination: most common debit_account_id among bills (that isn't the envelope itself)
@@ -149,7 +173,7 @@ export default function WeeklyAllocation() {
         for (const [destId, destBills] of byDestination) {
           const destination = accounts.find(a => a.id === destId)
           if (!destination) continue
-          const destFill = destBills.reduce((s, b) => s + (cashflow.effective[b.id] ?? 0), 0)
+          const destFill = fillFromPayersThisWeek(destBills)
           const routeTransfers = transfers.filter(t => t.from_account_id === envelopeId && t.to_account_id === destId)
           const transferred = routeTransfers.reduce((s, t) => s + t.amount, 0)
           cards.push({
@@ -161,7 +185,7 @@ export default function WeeklyAllocation() {
         // Also accumulator card for any bills WITHOUT a debit destination
         const accBills = bills.filter(b => !b.debit_account_id || b.debit_account_id === envelopeId)
         if (accBills.length > 0) {
-          const accFill = accBills.reduce((s, b) => s + (cashflow.effective[b.id] ?? 0), 0)
+          const accFill = fillFromPayersThisWeek(accBills)
           cards.push({
             envelope, bills: accBills, weeklyFill: accFill, balance,
             kind: 'accumulator', transfers: [], transferred: 0,
@@ -169,8 +193,9 @@ export default function WeeklyAllocation() {
         }
       } else {
         // No debit account on any bill → pure accumulator
+        const accFill = fillFromPayersThisWeek(bills)
         cards.push({
-          envelope, bills, weeklyFill, balance,
+          envelope, bills, weeklyFill: accFill, balance,
           kind: 'accumulator', transfers: [], transferred: 0,
         })
       }
@@ -182,17 +207,10 @@ export default function WeeklyAllocation() {
       if (aKind !== bKind) return aKind - bKind
       return a.envelope.name.localeCompare(b.envelope.name)
     })
-  }, [expenses, accounts, transfers, cashflow, latestLogs])
+  }, [expenses, accounts, transfers, cashflow, latestLogs, payingThisWeek])
 
   // Keep "routes" name for the transfer save/delete handlers (they use fromAccount/toAccount)
   type Route = { fromAccount: Account; toAccount: Account; weeklyAmount: number; transferred: number }
-
-  // ── Pay context (real cash arriving this week, not weekly average) ────────
-
-  const payingThisWeek = income.filter(s =>
-    s.payday_reference && isPayWeek(s.payday_reference, s.frequency, weekStart)
-  )
-  const cashArrivingThisWeek = payingThisWeek.reduce((s, p) => s + getEffectivePay(p), 0)
 
   // ── Per-pay-event attribution ───────────────────────────────────────────
   // Pay events alternate (e.g. James's fortnight, then Alex's fortnight). Each pay
@@ -580,7 +598,9 @@ export default function WeeklyAllocation() {
                         </div>
                       </div>
                       <div className="text-right flex-shrink-0">
-                        <p className="text-[10px] text-text-muted uppercase tracking-wider">Filled this week</p>
+                        <p className="text-[10px] text-text-muted uppercase tracking-wider">
+                          {payingThisWeek.length > 0 ? 'Auto-split this pay' : 'Avg per week'}
+                        </p>
                         <p className="text-base font-semibold text-success tabular-nums">+{formatCurrency(card.weeklyFill)}</p>
                       </div>
                     </div>
