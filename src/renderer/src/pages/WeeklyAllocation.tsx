@@ -97,71 +97,94 @@ export default function WeeklyAllocation() {
 
   // ── Money flow analysis ───────────────────────────────────────────────────
 
-  // For each (envelope → debit account) routing, group bills and compute the move amount
-  type Route = {
-    fromAccount: Account
-    toAccount: Account
+  // ── Unified envelope cards (combine routes + accumulators) ───────────────
+  // Every envelope is the same KIND of card — auto-filled from pay. Some need a
+  // manual transfer out (kind='route'), others stay in the envelope (kind='accumulator').
+  type EnvelopeCard = {
+    envelope: Account
     bills: Expense[]
-    weeklyAmount: number
-    transfers: Transfer[]   // transfers already made this week for this route
-    transferred: number      // sum of those
+    weeklyFill: number          // weekly equiv that the auto-split puts in
+    balance: number              // latest logged balance
+    kind: 'route' | 'accumulator'
+    destination?: Account        // for routes
+    transfers: Transfer[]        // logged transfers this week (routes only)
+    transferred: number          // sum of those
   }
 
   const cashflow = useMemo(() => computeWeeklyCashflow(expenses, income, goals), [expenses, income, goals])
 
-  const routes = useMemo<Route[]>(() => {
-    const map = new Map<string, Route>()
+  const envelopeCards = useMemo<EnvelopeCard[]>(() => {
+    // Group bills by envelope (save_account_id, with fallback to account_id)
+    const byEnvelope = new Map<number, Expense[]>()
     for (const e of expenses) {
-      const fromId = e.save_account_id ?? e.account_id
-      const toId = e.debit_account_id
-      if (!fromId || !toId || fromId === toId) continue
-      const fromAccount = accounts.find(a => a.id === fromId)
-      const toAccount = accounts.find(a => a.id === toId)
-      if (!fromAccount || !toAccount) continue
-      const key = `${fromId}-${toId}`
-      const weekly = cashflow.effective[e.id] ?? 0
-      const existing = map.get(key)
-      if (existing) {
-        existing.bills.push(e)
-        existing.weeklyAmount += weekly
-      } else {
-        map.set(key, { fromAccount, toAccount, bills: [e], weeklyAmount: weekly, transfers: [], transferred: 0 })
-      }
+      const id = e.save_account_id ?? e.account_id
+      if (!id) continue
+      if (!byEnvelope.has(id)) byEnvelope.set(id, [])
+      byEnvelope.get(id)!.push(e)
     }
-    // Attach transfers already made this week to their routes
-    for (const t of transfers) {
-      const key = `${t.from_account_id}-${t.to_account_id}`
-      const r = map.get(key)
-      if (r) {
-        r.transfers.push(t)
-        r.transferred += t.amount
-      }
-    }
-    return Array.from(map.values()).sort((a, b) => a.toAccount.name.localeCompare(b.toAccount.name))
-  }, [expenses, accounts, transfers])
+    const cards: EnvelopeCard[] = []
+    for (const [envelopeId, bills] of byEnvelope) {
+      const envelope = accounts.find(a => a.id === envelopeId)
+      if (!envelope) continue
+      const log = latestLogs.find(l => l.account_id === envelope.id)
+      const weeklyFill = bills.reduce((s, b) => s + (cashflow.effective[b.id] ?? 0), 0)
+      const balance = log?.balance ?? 0
 
-  // Accumulating accounts: envelopes whose bills have NO debit account (paid direct or piling)
-  type Accumulator = { account: Account; bills: Expense[]; weeklyFill: number }
-  const accumulators = useMemo<Accumulator[]>(() => {
-    const map = new Map<number, Accumulator>()
-    for (const e of expenses) {
-      const fromId = e.save_account_id ?? e.account_id
-      if (!fromId) continue
-      // Skip if it has a debit destination (those are routes)
-      if (e.debit_account_id && e.debit_account_id !== fromId) continue
-      const account = accounts.find(a => a.id === fromId)
-      if (!account) continue
-      const weekly = cashflow.effective[e.id] ?? 0
-      const existing = map.get(account.id)
-      if (existing) {
-        existing.bills.push(e)
-        existing.weeklyFill += weekly
+      // Determine destination: most common debit_account_id among bills (that isn't the envelope itself)
+      const debitIds = bills
+        .map(b => b.debit_account_id)
+        .filter((id): id is number => !!id && id !== envelopeId)
+      if (debitIds.length > 0) {
+        // Group bills by their debit destination
+        const byDestination = new Map<number, Expense[]>()
+        for (const b of bills) {
+          const dest = b.debit_account_id && b.debit_account_id !== envelopeId ? b.debit_account_id : null
+          if (dest) {
+            if (!byDestination.has(dest)) byDestination.set(dest, [])
+            byDestination.get(dest)!.push(b)
+          }
+        }
+        // One card per (envelope → destination) pair
+        for (const [destId, destBills] of byDestination) {
+          const destination = accounts.find(a => a.id === destId)
+          if (!destination) continue
+          const destFill = destBills.reduce((s, b) => s + (cashflow.effective[b.id] ?? 0), 0)
+          const routeTransfers = transfers.filter(t => t.from_account_id === envelopeId && t.to_account_id === destId)
+          const transferred = routeTransfers.reduce((s, t) => s + t.amount, 0)
+          cards.push({
+            envelope, bills: destBills, weeklyFill: destFill, balance,
+            kind: 'route', destination,
+            transfers: routeTransfers, transferred,
+          })
+        }
+        // Also accumulator card for any bills WITHOUT a debit destination
+        const accBills = bills.filter(b => !b.debit_account_id || b.debit_account_id === envelopeId)
+        if (accBills.length > 0) {
+          const accFill = accBills.reduce((s, b) => s + (cashflow.effective[b.id] ?? 0), 0)
+          cards.push({
+            envelope, bills: accBills, weeklyFill: accFill, balance,
+            kind: 'accumulator', transfers: [], transferred: 0,
+          })
+        }
       } else {
-        map.set(account.id, { account, bills: [e], weeklyFill: weekly })
+        // No debit account on any bill → pure accumulator
+        cards.push({
+          envelope, bills, weeklyFill, balance,
+          kind: 'accumulator', transfers: [], transferred: 0,
+        })
       }
     }
-    return Array.from(map.values()).sort((a, b) => a.account.name.localeCompare(b.account.name))
-  }, [expenses, accounts, cashflow])
+    // Sort: routes needing action first, then completed routes, then accumulators
+    return cards.sort((a, b) => {
+      const aKind = a.kind === 'accumulator' ? 2 : (a.transferred >= a.weeklyFill * 0.95 ? 1 : 0)
+      const bKind = b.kind === 'accumulator' ? 2 : (b.transferred >= b.weeklyFill * 0.95 ? 1 : 0)
+      if (aKind !== bKind) return aKind - bKind
+      return a.envelope.name.localeCompare(b.envelope.name)
+    })
+  }, [expenses, accounts, transfers, cashflow, latestLogs])
+
+  // Keep "routes" name for the transfer save/delete handlers (they use fromAccount/toAccount)
+  type Route = { fromAccount: Account; toAccount: Account; weeklyAmount: number; transferred: number }
 
   // ── Pay context (real cash arriving this week, not weekly average) ────────
 
@@ -279,8 +302,8 @@ export default function WeeklyAllocation() {
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
-  async function handleSaveTransfer(route: Route) {
-    const key = `${route.fromAccount.id}-${route.toAccount.id}`
+  async function handleSaveTransfer(fromAccount: Account, toAccount: Account) {
+    const key = `${fromAccount.id}-${toAccount.id}`
     const raw = drafts[key]
     const amount = parseFloat(raw)
     if (!amount || amount <= 0) {
@@ -288,12 +311,12 @@ export default function WeeklyAllocation() {
       return
     }
     await (window.api as any).transfers.save({
-      from_account_id: route.fromAccount.id,
-      to_account_id: route.toAccount.id,
+      from_account_id: fromAccount.id,
+      to_account_id: toAccount.id,
       amount,
       week_start: weekStart,
     })
-    toast(`Logged ${formatCurrency(amount)}: ${route.fromAccount.name} → ${route.toAccount.name}`)
+    toast(`Logged ${formatCurrency(amount)}: ${fromAccount.name} → ${toAccount.name}`)
     setDrafts(d => ({ ...d, [key]: '' }))
     loadWeekData()
   }
@@ -331,9 +354,9 @@ export default function WeeklyAllocation() {
         </div>
       </div>
 
-      {/* Pay context */}
+      {/* Pay context — sticky so the summary stays visible as you log transfers */}
       {payingThisWeek.length > 0 ? (
-        <div className="bg-accent/10 border border-accent/30 rounded-lg p-4 space-y-3">
+        <div className="sticky top-0 z-10 bg-accent/10 backdrop-blur-sm border border-accent/30 rounded-lg p-4 space-y-3 shadow-lg">
           <div className="flex items-start gap-3">
             <DollarSign size={18} className="text-accent flex-shrink-0 mt-0.5" />
             <div className="flex-1">
@@ -478,154 +501,145 @@ export default function WeeklyAllocation() {
         </div>
       )}
 
-      {/* Routes (transfers to make) */}
-      {routes.length > 0 ? (
+      {/* Unified envelope grid — every envelope is the same kind of card */}
+      {envelopeCards.length > 0 ? (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider">Transfers to make</h2>
+            <div>
+              <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider">Envelopes this week</h2>
+              <p className="text-[11px] text-text-muted mt-0.5">
+                Each envelope auto-fills from your pay. Some need a manual transfer to Bank 2, others drain via spending or accumulate.
+              </p>
+            </div>
             <p className="text-[11px] text-text-muted">
-              {routes.filter(r => r.transferred >= r.weeklyAmount * 0.95).length} / {routes.length} done
+              {envelopeCards.filter(c => c.kind === 'route' && c.transferred >= c.weeklyFill * 0.95).length}
+              {' / '}
+              {envelopeCards.filter(c => c.kind === 'route').length} transfers done
             </p>
           </div>
-          {routes.map(route => {
-            const key = `${route.fromAccount.id}-${route.toAccount.id}`
-            const draft = drafts[key] ?? ''
-            const suggested = route.weeklyAmount
-            const remaining = Math.max(0, suggested - route.transferred)
-            const isComplete = route.transferred >= suggested * 0.95
-            const destLog = latestLogs.find(l => l.account_id === route.toAccount.id)
 
-            return (
-              <Card key={key} className={isComplete ? 'border-success/30' : ''}>
-                <CardContent className="pt-4 pb-4">
-                  {/* Route header */}
-                  <div className="flex items-center justify-between gap-4 mb-3">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="flex items-center gap-2 text-sm">
-                        <div className="w-2 h-6 rounded-full" style={{ backgroundColor: route.fromAccount.color }} />
-                        <span className="font-medium text-text-primary">{route.fromAccount.name}</span>
-                        <ArrowRight size={14} className="text-text-muted" />
-                        <div className="w-2 h-6 rounded-full" style={{ backgroundColor: route.toAccount.color }} />
-                        <span className="font-medium text-text-primary">{route.toAccount.name}</span>
-                      </div>
-                    </div>
-                    {isComplete && <CheckCircle2 size={18} className="text-success flex-shrink-0" />}
-                  </div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            {envelopeCards.map(card => {
+              const key = card.destination
+                ? `${card.envelope.id}-${card.destination.id}`
+                : `acc-${card.envelope.id}-${card.bills[0]?.id ?? 0}`
+              const draft = drafts[key] ?? ''
+              const remaining = Math.max(0, card.weeklyFill - card.transferred)
+              const isComplete = card.kind === 'route' && card.transferred >= card.weeklyFill * 0.95
+              const destLog = card.destination ? latestLogs.find(l => l.account_id === card.destination!.id) : null
 
-                  {/* Numbers */}
-                  <div className="grid grid-cols-3 gap-2 mb-3">
-                    <div className="bg-surface-2 rounded-lg p-2.5 border border-border">
-                      <p className="text-[10px] text-text-muted uppercase tracking-wider">Suggested</p>
-                      <p className="text-sm font-semibold text-text-primary tabular-nums mt-0.5">{formatCurrency(suggested)}</p>
-                    </div>
-                    <div className="bg-surface-2 rounded-lg p-2.5 border border-border">
-                      <p className="text-[10px] text-text-muted uppercase tracking-wider">Already moved</p>
-                      <p className={`text-sm font-semibold tabular-nums mt-0.5 ${route.transferred > 0 ? 'text-success' : 'text-text-muted'}`}>
-                        {formatCurrency(route.transferred)}
-                      </p>
-                    </div>
-                    <div className="bg-surface-2 rounded-lg p-2.5 border border-border">
-                      <p className="text-[10px] text-text-muted uppercase tracking-wider">Destination balance</p>
-                      <p className="text-sm font-semibold text-text-primary tabular-nums mt-0.5">
-                        {destLog ? formatCurrency(destLog.balance) : '—'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Bills covered */}
-                  <div className="mb-3">
-                    <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1.5">Covers ({route.bills.length} bills)</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {route.bills.map(bill => (
-                        <span key={bill.id} className="text-[11px] bg-surface-2 border border-border rounded px-2 py-0.5 text-text-secondary">
-                          {bill.name} <span className="text-text-muted">·</span> {formatCurrency(bill.amount)}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Action: enter actual amount */}
-                  {!isComplete && (
-                    <div className="flex items-end gap-2">
-                      <div className="flex-1">
-                        <Input
-                          label={`Actual moved this week (suggested ${formatCurrency(remaining)})`}
-                          type="number"
-                          prefix="$"
-                          placeholder={remaining.toFixed(2)}
-                          value={draft}
-                          onChange={e => setDrafts(d => ({ ...d, [key]: e.target.value }))}
-                        />
-                      </div>
-                      <Button onClick={() => handleSaveTransfer(route)} disabled={!draft}>
-                        Log transfer
-                      </Button>
-                    </div>
-                  )}
-
-                  {/* Logged transfers list */}
-                  {route.transfers.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-border space-y-1">
-                      {route.transfers.map(t => (
-                        <div key={t.id} className="flex items-center justify-between text-[11px]">
-                          <span className="text-text-secondary">
-                            {format(new Date(t.transfer_date), 'EEE d MMM, h:mm a')}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-text-primary tabular-nums font-medium">{formatCurrency(t.amount)}</span>
-                            <button
-                              onClick={() => handleDeleteTransfer(t.id)}
-                              className="text-text-muted hover:text-danger transition-colors p-0.5"
-                              title="Remove this transfer"
-                            >
-                              <Trash2 size={11} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      ) : (
-        <Card>
-          <CardContent className="py-8 text-center">
-            <Wallet size={28} className="text-text-muted mx-auto mb-3" />
-            <p className="text-sm text-text-secondary">No transfers configured yet.</p>
-            <p className="text-xs text-text-muted mt-1">In Budget Setup → Expenses, set both "Saves to" and "Debits from" on each bill to build your money flow.</p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Accumulating accounts */}
-      {accumulators.length > 0 && (
-        <div className="space-y-3">
-          <div>
-            <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wider">Accumulating</h2>
-            <p className="text-[11px] text-text-muted mt-0.5">Envelopes that fill weekly but don't transfer to Bank 2 — paid direct or building up over time.</p>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {accumulators.map(a => {
-              const log = latestLogs.find(l => l.account_id === a.account.id)
               return (
-                <Card key={a.account.id} className="border-l-4" style={{ borderLeftColor: a.account.color }}>
-                  <CardContent className="pt-3.5 pb-3.5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <Coffee size={13} className="text-text-muted" />
-                          <p className="text-sm font-medium text-text-primary">{a.account.name}</p>
+                <Card key={key} className={isComplete ? 'border-success/30' : ''}>
+                  <CardContent className="pt-4 pb-4">
+                    {/* Header: envelope name + this week's fill amount */}
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-1.5 h-8 rounded-full flex-shrink-0" style={{ backgroundColor: card.envelope.color }} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-text-primary truncate">{card.envelope.name}</p>
+                          {card.kind === 'route' && card.destination ? (
+                            <p className="text-[11px] text-text-muted flex items-center gap-1 truncate">
+                              <ArrowRight size={10} className="flex-shrink-0" />
+                              <span className="truncate">{card.destination.name}</span>
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-text-muted">Stays in envelope</p>
+                          )}
                         </div>
-                        <p className="text-[11px] text-text-muted mt-0.5">
-                          Fills {formatCurrency(a.weeklyFill)}/wk · {a.bills.length} bill{a.bills.length === 1 ? '' : 's'}
-                        </p>
                       </div>
-                      <p className="text-base font-semibold text-text-primary tabular-nums">
-                        {log ? formatCurrency(log.balance) : '—'}
-                      </p>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-[10px] text-text-muted uppercase tracking-wider">Filled this week</p>
+                        <p className="text-base font-semibold text-success tabular-nums">+{formatCurrency(card.weeklyFill)}</p>
+                      </div>
+                    </div>
+
+                    {/* Sub-stats: balance + bill count + destination balance (routes only) */}
+                    <div className="flex items-center gap-4 text-[11px] text-text-muted mb-3 pb-3 border-b border-border">
+                      <span>Balance: <span className="text-text-primary tabular-nums">{formatCurrency(card.balance)}</span></span>
+                      <span>{card.bills.length} bill{card.bills.length === 1 ? '' : 's'}</span>
+                      {destLog && (
+                        <span>Destination: <span className="text-text-primary tabular-nums">{formatCurrency(destLog.balance)}</span></span>
+                      )}
+                    </div>
+
+                    {/* Action area — varies by kind */}
+                    {card.kind === 'route' ? (
+                      <>
+                        {!isComplete ? (
+                          <div className="space-y-2">
+                            <div className="flex items-baseline justify-between">
+                              <p className="text-xs text-text-secondary">Move to {card.destination!.name}</p>
+                              <p className="text-xs text-text-muted">Suggested {formatCurrency(remaining)}</p>
+                            </div>
+                            <div className="flex items-stretch gap-2">
+                              <Input
+                                type="number"
+                                prefix="$"
+                                placeholder={remaining.toFixed(2)}
+                                value={draft}
+                                onChange={e => setDrafts(d => ({ ...d, [key]: e.target.value }))}
+                                className="flex-1"
+                              />
+                              <Button onClick={() => handleSaveTransfer(card.envelope, card.destination!)} disabled={!draft}>
+                                Log
+                              </Button>
+                            </div>
+                            {card.transferred > 0 && (
+                              <p className="text-[10px] text-success">Already moved {formatCurrency(card.transferred)} of {formatCurrency(card.weeklyFill)}</p>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-sm text-success">
+                            <CheckCircle2 size={16} />
+                            <span>Transfer done · {formatCurrency(card.transferred)} moved</span>
+                          </div>
+                        )}
+
+                        {/* Logged transfers (when any exist) */}
+                        {card.transfers.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-border space-y-1">
+                            {card.transfers.map(t => (
+                              <div key={t.id} className="flex items-center justify-between text-[11px]">
+                                <span className="text-text-secondary">
+                                  {format(new Date(t.transfer_date), 'EEE d MMM, h:mm a')}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-text-primary tabular-nums font-medium">{formatCurrency(t.amount)}</span>
+                                  <button
+                                    onClick={() => handleDeleteTransfer(t.id)}
+                                    className="text-text-muted hover:text-danger transition-colors p-0.5"
+                                    title="Remove this transfer"
+                                  >
+                                    <Trash2 size={11} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="flex items-start gap-2 text-xs">
+                        <Coffee size={14} className="text-text-muted mt-0.5 flex-shrink-0" />
+                        <div>
+                          <p className="text-text-primary">Auto-handled · no manual transfer</p>
+                          <p className="text-[10px] text-text-muted mt-0.5">
+                            Funded by auto-split. Money stays in this envelope until spent direct or builds up over time.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Bills list (compact, always shown) */}
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <p className="text-[10px] text-text-muted uppercase tracking-wider mb-1.5">Covers</p>
+                      <div className="flex flex-wrap gap-1">
+                        {card.bills.map(bill => (
+                          <span key={bill.id} className="text-[10px] bg-surface-2 border border-border rounded px-1.5 py-0.5 text-text-secondary">
+                            {bill.name}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -633,6 +647,14 @@ export default function WeeklyAllocation() {
             })}
           </div>
         </div>
+      ) : (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <Wallet size={28} className="text-text-muted mx-auto mb-3" />
+            <p className="text-sm text-text-secondary">No envelopes set up yet.</p>
+            <p className="text-xs text-text-muted mt-1">In Budget Setup → Expenses, set "Saves to" on each bill to assign it to an envelope.</p>
+          </CardContent>
+        </Card>
       )}
 
       {/* Per-pay item-by-item breakdown modal */}

@@ -8,6 +8,18 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.12.0',
+    date: '2026-05-11',
+    title: 'Weekly Move — Unified Envelope Cards',
+    highlights: [
+      'Major Weekly Move redesign. The old "Transfers to make" vs "Accumulating" split is gone — every envelope is now the same kind of card.',
+      'Every card shows: envelope name + destination (or "Stays in envelope"), Filled this week (auto-split incoming), balance, bill count, and an action area.',
+      'For routed envelopes the action area is the move input + Log button. For accumulators it\'s a clear "Auto-handled · no manual transfer" status. Same shape, same visual weight — they FEEL like the same kind of thing.',
+      'Cards laid out in a responsive 1/2-column grid. Routes needing action sort first, then done routes, then accumulators.',
+      'Pay banner at top is now sticky — your remaining math stays in view as you scroll and log transfers.',
+    ],
+  },
+  {
     version: '1.11.8',
     date: '2026-05-11',
     title: 'Excel/PDF Export Math Fix',
