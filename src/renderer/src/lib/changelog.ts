@@ -8,6 +8,17 @@ export interface ReleaseNote {
 // Most recent release first
 export const CHANGELOG: ReleaseNote[] = [
   {
+    version: '1.13.0',
+    date: '2026-05-11',
+    title: 'Pay Range for Variable Income',
+    highlights: [
+      'Income sources now have optional Lowest/Highest pay fields. The main "Average pay" is still the planning default; the range is for context — useful for shift workers with penalty rates.',
+      'Budget Setup → Income card shows the range in teal under the average when set.',
+      'Pay Calendar (Dashboard) shows the low–high range under each pay event in subtle teal, so you can see at a glance which weeks will be lean vs flush.',
+      'Per-week pay override (the pencil icon on Weekly Move) still works for setting an exact actual amount once you know it.',
+    ],
+  },
+  {
     version: '1.12.2',
     date: '2026-05-11',
     title: 'Pay-Event-Aware Fill Amounts',

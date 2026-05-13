@@ -370,12 +370,23 @@ export default function Dashboard() {
                         <p className="text-[10px] text-text-muted mt-1">No pay</p>
                       ) : (
                         <div className="mt-1 space-y-0.5 flex-1">
-                          {w.events.map((e, j) => (
+                          {w.events.map((e, j) => {
+                            const src = income.find(i => i.person_name === e.person)
+                            const hasRange = src && (src.min_amount != null || src.max_amount != null)
+                            return (
                             <div key={j}>
                               <p className="text-[11px] text-text-primary truncate">{e.person}</p>
                               <p className="text-[10px] text-text-muted tabular-nums">{formatCurrency(e.amount)}</p>
+                              {hasRange && (
+                                <p className="text-[9px] text-accent/70 tabular-nums">
+                                  {src!.min_amount != null ? formatCurrency(src!.min_amount) : '—'}
+                                  {'–'}
+                                  {src!.max_amount != null ? formatCurrency(src!.max_amount) : '—'}
+                                </p>
+                              )}
                             </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       )}
                       {!isEmpty && (

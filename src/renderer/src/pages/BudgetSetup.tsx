@@ -146,27 +146,38 @@ function IncomeTab({ income, onRefresh }: { income: IncomeSource[]; onRefresh: (
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<IncomeSource | null>(null)
   const [confirmId, setConfirmId] = useState<number | null>(null)
-  const [form, setForm] = useState({ person_name: '', amount: '', frequency: 'fortnightly', payday_reference: '' })
+  const [form, setForm] = useState({ person_name: '', amount: '', frequency: 'fortnightly', payday_reference: '', min_amount: '', max_amount: '' })
   const { toast } = useToast()
 
   function openAdd() {
     setEditing(null)
-    setForm({ person_name: '', amount: '', frequency: 'fortnightly', payday_reference: '' })
+    setForm({ person_name: '', amount: '', frequency: 'fortnightly', payday_reference: '', min_amount: '', max_amount: '' })
     setOpen(true)
   }
 
   function openEdit(src: IncomeSource) {
     setEditing(src)
-    setForm({ person_name: src.person_name, amount: String(src.amount), frequency: src.frequency, payday_reference: src.payday_reference ?? '' })
+    setForm({
+      person_name: src.person_name,
+      amount: String(src.amount),
+      frequency: src.frequency,
+      payday_reference: src.payday_reference ?? '',
+      min_amount: src.min_amount != null ? String(src.min_amount) : '',
+      max_amount: src.max_amount != null ? String(src.max_amount) : '',
+    })
     setOpen(true)
   }
 
   async function handleSave() {
+    const minParsed = parseFloat(form.min_amount)
+    const maxParsed = parseFloat(form.max_amount)
     const data = {
       person_name: form.person_name,
       amount: parseFloat(form.amount) || 0,
       frequency: form.frequency as IncomeSource['frequency'],
       payday_reference: form.payday_reference || undefined,
+      min_amount: !isNaN(minParsed) && minParsed > 0 ? minParsed : undefined,
+      max_amount: !isNaN(maxParsed) && maxParsed > 0 ? maxParsed : undefined,
     }
     if (editing) {
       await window.api.income.update(editing.id, data)
@@ -198,13 +209,46 @@ function IncomeTab({ income, onRefresh }: { income: IncomeSource[]; onRefresh: (
           <DialogContent title={editing ? 'Edit Income' : 'Add Income Source'}>
             <div className="space-y-4">
               <Input label="Person's name" placeholder="e.g. James" value={form.person_name} onChange={e => setForm(f => ({ ...f, person_name: e.target.value }))} />
-              <Input label="Amount" type="number" prefix="$" placeholder="0.00" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+              <Input
+                label="Average pay ($)"
+                type="number"
+                prefix="$"
+                placeholder="0.00"
+                value={form.amount}
+                onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+                hint="The typical/expected amount per pay event. Used as the planning default."
+              />
               <Select value={form.frequency} onValueChange={v => setForm(f => ({ ...f, frequency: v }))}>
                 <SelectTrigger label="Pay frequency"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {FREQ_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                 </SelectContent>
               </Select>
+
+              <div className="rounded-lg border border-border bg-surface-2/40 p-3 space-y-3">
+                <p className="text-[11px] text-text-muted">
+                  <span className="font-medium text-text-secondary">Pay range (optional)</span> — for variable income like shift work. Shown in the Pay Calendar as a low–high band so you can plan around lean vs flush weeks.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    label="Lowest typical ($)"
+                    type="number"
+                    prefix="$"
+                    placeholder="—"
+                    value={form.min_amount}
+                    onChange={e => setForm(f => ({ ...f, min_amount: e.target.value }))}
+                  />
+                  <Input
+                    label="Highest typical ($)"
+                    type="number"
+                    prefix="$"
+                    placeholder="—"
+                    value={form.max_amount}
+                    onChange={e => setForm(f => ({ ...f, max_amount: e.target.value }))}
+                  />
+                </div>
+              </div>
+
               <Input
                 label="First payday date (optional)"
                 type="date"
@@ -249,6 +293,13 @@ function IncomeTab({ income, onRefresh }: { income: IncomeSource[]; onRefresh: (
                         <span> · {formatCurrency(toWeeklyAmount(src.amount, src.frequency))}/wk</span>
                       )}
                     </p>
+                    {(src.min_amount != null || src.max_amount != null) && (
+                      <p className="text-[10px] text-accent mt-0.5">
+                        Range: {src.min_amount != null ? formatCurrency(src.min_amount) : '—'}
+                        {' – '}
+                        {src.max_amount != null ? formatCurrency(src.max_amount) : '—'}
+                      </p>
+                    )}
                   </div>
                   <div className="flex gap-1">
                     <Button size="icon" variant="ghost" onClick={() => openEdit(src)}><Pencil size={13} /></Button>

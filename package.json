@@ -1,6 +1,6 @@
 {
   "name": "vault-budget",
-  "version": "1.12.2",
+  "version": "1.13.0",
   "description": "Household budgeting app",
   "main": "./out/main/index.js",
   "scripts": {

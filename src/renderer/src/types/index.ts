@@ -36,9 +36,11 @@ export interface AccountInput {
 export interface IncomeSource {
   id: number
   person_name: string
-  amount: number
+  amount: number  // primary planning amount (used as average for variable pay)
   frequency: 'weekly' | 'fortnightly' | 'monthly' | 'annual'
   payday_reference?: string
+  min_amount?: number  // optional: low end of variable pay range
+  max_amount?: number  // optional: high end of variable pay range
   created_at: string
 }
 
@@ -47,6 +49,8 @@ export interface IncomeSourceInput {
   amount: number
   frequency: 'weekly' | 'fortnightly' | 'monthly' | 'annual'
   payday_reference?: string
+  min_amount?: number
+  max_amount?: number
 }
 
 export type PercentageBasis = 'free_cashflow' | 'combined_income' | 'specific_pay'

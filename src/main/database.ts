@@ -22,6 +22,9 @@ function initSchema(db: Database.Database): void {
   try { db.exec('ALTER TABLE expenses ADD COLUMN allocation_amount REAL') } catch {}
   try { db.exec('ALTER TABLE expenses ADD COLUMN weekly_extra REAL') } catch {}
   try { db.exec('ALTER TABLE income_sources ADD COLUMN payday_reference TEXT') } catch {}
+  // v1.13.0 — pay range (for variable income like shift work)
+  try { db.exec('ALTER TABLE income_sources ADD COLUMN min_amount REAL') } catch {}
+  try { db.exec('ALTER TABLE income_sources ADD COLUMN max_amount REAL') } catch {}
   // v1.11.0 — percentage-based expense allocations
   try { db.exec('ALTER TABLE expenses ADD COLUMN is_percentage INTEGER NOT NULL DEFAULT 0') } catch {}
   try { db.exec('ALTER TABLE expenses ADD COLUMN percentage_basis TEXT') } catch {}
@@ -178,15 +181,15 @@ export function dbGetIncomeSources() {
   return getDb().prepare('SELECT * FROM income_sources ORDER BY person_name').all()
 }
 
-export function dbSaveIncomeSource(data: { person_name: string; amount: number; frequency: string; payday_reference?: string }) {
+export function dbSaveIncomeSource(data: { person_name: string; amount: number; frequency: string; payday_reference?: string; min_amount?: number; max_amount?: number }) {
   const stmt = getDb().prepare(
-    'INSERT INTO income_sources (person_name, amount, frequency, payday_reference) VALUES (?, ?, ?, ?)'
+    'INSERT INTO income_sources (person_name, amount, frequency, payday_reference, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)'
   )
-  const result = stmt.run(data.person_name, data.amount, data.frequency, data.payday_reference ?? null)
+  const result = stmt.run(data.person_name, data.amount, data.frequency, data.payday_reference ?? null, data.min_amount ?? null, data.max_amount ?? null)
   return getDb().prepare('SELECT * FROM income_sources WHERE id = ?').get(result.lastInsertRowid)
 }
 
-export function dbUpdateIncomeSource(id: number, data: Partial<{ person_name: string; amount: number; frequency: string }>) {
+export function dbUpdateIncomeSource(id: number, data: Partial<{ person_name: string; amount: number; frequency: string; payday_reference: string | null; min_amount: number | null; max_amount: number | null }>) {
   const fields = Object.keys(data).map(k => `${k} = ?`).join(', ')
   const values = [...Object.values(data), id]
   getDb().prepare(`UPDATE income_sources SET ${fields} WHERE id = ?`).run(...values)
